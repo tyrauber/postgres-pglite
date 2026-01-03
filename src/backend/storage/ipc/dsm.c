@@ -334,7 +334,7 @@ dsm_cleanup_for_mmap(void)
 			return;
 		}
 		/* On other errors, just return to avoid aborting bootstrap. */
-#if defined(__APPLE__) && (TARGET_OS_IOS || TARGET_IPHONE_SIMULATOR)
+#if defined(__APPLE__)
 		{
 			int saved_errno = errno;
 			elog(DEBUG2, "could not open '%s' for cleanup (errno=%d)", PG_DYNSHMEM_DIR, saved_errno);
