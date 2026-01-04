@@ -16,6 +16,13 @@
 
 #include <sys/stat.h>
 
+#ifdef PGL_MOBILE
+/* Mobile platforms use static extension registry instead of dlopen/dlsym */
+#include <stdbool.h>
+extern void *pgl_mobile_lookup_symbol(const char *symbol);
+extern bool pgl_mobile_is_builtin_library(const char *libname);
+#endif
+
 #ifndef WIN32
 #include <dlfcn.h>
 
@@ -28,7 +35,7 @@
 #undef bool
 #endif
 #endif
-#endif							/* !WIN32 */
+#endif /* !WIN32 */
 
 #include "fmgr.h"
 #include "lib/stringinfo.h"
@@ -37,15 +44,14 @@
 #include "storage/shmem.h"
 #include "utils/hsearch.h"
 
-
 /* signature for PostgreSQL-specific library init function */
-typedef void (*PG_init_t) (void);
+typedef void (*PG_init_t)(void);
 
 /* hashtable entry for rendezvous variables */
 typedef struct
 {
-	char		varName[NAMEDATALEN];	/* hash key (must be first) */
-	void	   *varValue;
+	char varName[NAMEDATALEN]; /* hash key (must be first) */
+	void *varValue;
 } rendezvousHashEntry;
 
 /*
@@ -54,14 +60,14 @@ typedef struct
 
 typedef struct df_files
 {
-	struct df_files *next;		/* List link */
-	dev_t		device;			/* Device file is on */
-#ifndef WIN32					/* ensures we never again depend on this under
-								 * win32 */
-	ino_t		inode;			/* Inode number of file */
+	struct df_files *next; /* List link */
+	dev_t device;					 /* Device file is on */
+#ifndef WIN32						 /* ensures we never again depend on this under \
+													* win32 */
+	ino_t inode;					 /* Inode number of file */
 #endif
-	void	   *handle;			/* a handle for pg_dl* functions */
-	char		filename[FLEXIBLE_ARRAY_MEMBER];	/* Full pathname of file */
+	void *handle;													/* a handle for pg_dl* functions */
+	char filename[FLEXIBLE_ARRAY_MEMBER]; /* Full pathname of file */
 } DynamicFileList;
 
 static DynamicFileList *file_list = NULL;
@@ -69,16 +75,16 @@ static DynamicFileList *file_tail = NULL;
 
 /* stat() call under Win32 returns an st_ino field, but it has no meaning */
 #ifndef WIN32
-#define SAME_INODE(A,B) ((A).st_ino == (B).inode && (A).st_dev == (B).device)
+#define SAME_INODE(A, B) ((A).st_ino == (B).inode && (A).st_dev == (B).device)
 #else
-#define SAME_INODE(A,B) false
+#define SAME_INODE(A, B) false
 #endif
 
-char	   *Dynamic_library_path;
+char *Dynamic_library_path;
 
 static void *internal_load_library(const char *libname);
 static void incompatible_module_error(const char *libname,
-									  const Pg_magic_struct *module_magic_data) pg_attribute_noreturn();
+																			const Pg_magic_struct *module_magic_data) pg_attribute_noreturn();
 static char *expand_dynamic_library_name(const char *name);
 static void check_restricted_library_name(const char *name);
 static char *substitute_libpath_macro(const char *name);
@@ -86,7 +92,6 @@ static char *find_in_dynamic_libpath(const char *basename);
 
 /* Magic structure that module needs to match to be accepted */
 static const Pg_magic_struct magic_data = PG_MODULE_MAGIC_DATA;
-
 
 /*
  * Load the specified dynamic-link library file, and look for a function
@@ -103,11 +108,39 @@ static const Pg_magic_struct magic_data = PG_MODULE_MAGIC_DATA;
  */
 void *
 load_external_function(const char *filename, const char *funcname,
-					   bool signalNotFound, void **filehandle)
+											 bool signalNotFound, void **filehandle)
 {
-	char	   *fullname;
-	void	   *lib_handle;
-	void	   *retval;
+#ifdef PGL_MOBILE
+	/*
+	 * On mobile platforms (iOS/Android), we cannot use dlopen/dlsym.
+	 * Instead, look up the function in our static extension registry.
+	 */
+	void *retval;
+
+	/* Debug logging */
+	fprintf(stderr, "[PGL_MOBILE] load_external_function: filename='%s' funcname='%s'\n",
+					filename ? filename : "(null)", funcname ? funcname : "(null)");
+
+	/* For mobile, filehandle is not meaningful - just set to non-NULL sentinel */
+	if (filehandle)
+		*filehandle = (void *)1;
+
+	/* Look up in static registry */
+	retval = pgl_mobile_lookup_symbol(funcname);
+	fprintf(stderr, "[PGL_MOBILE] pgl_mobile_lookup_symbol('%s') returned %p\n", funcname, retval);
+
+	if (retval == NULL && signalNotFound)
+		ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_FUNCTION),
+						 errmsg("could not find function \"%s\" in extension \"%s\"",
+										funcname, filename),
+						 errhint("This extension may not be compiled into the mobile build.")));
+
+	return retval;
+#else
+	char *fullname;
+	void *lib_handle;
+	void *retval;
 
 	/* Expand the possibly-abbreviated filename to an exact path name */
 	fullname = expand_dynamic_library_name(filename);
@@ -124,15 +157,16 @@ load_external_function(const char *filename, const char *funcname,
 #if !defined(__wasi__)
 	if (retval == NULL && signalNotFound)
 		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_FUNCTION),
-				 errmsg("could not find function \"%s\" in file \"%s\"",
-						funcname, fullname)));
+						(errcode(ERRCODE_UNDEFINED_FUNCTION),
+						 errmsg("could not find function \"%s\" in file \"%s\"",
+										funcname, fullname)));
 #else
-    fprintf(stderr, "could not find function \"%s\" in file \"%s\" rv=%p snf=%b\n", funcname, fullname, retval, signalNotFound);
+	fprintf(stderr, "could not find function \"%s\" in file \"%s\" rv=%p snf=%b\n", funcname, fullname, retval, signalNotFound);
 #endif
 
 	pfree(fullname);
 	return retval;
+#endif /* PGL_MOBILE */
 }
 
 /*
@@ -143,10 +177,35 @@ load_external_function(const char *filename, const char *funcname,
  * When 'restricted' is true, only libraries in the presumed-secure
  * directory $libdir/plugins may be referenced.
  */
-void
-load_file(const char *filename, bool restricted)
+void load_file(const char *filename, bool restricted)
 {
-	char	   *fullname;
+#ifdef PGL_MOBILE
+	/*
+	 * On mobile, check if this is a builtin library.
+	 * If so, consider it "loaded" (no actual loading needed).
+	 * Otherwise, error out since we can't dynamically load.
+	 */
+	fprintf(stderr, "[PGL_MOBILE] load_file: filename='%s' restricted=%d\n",
+					filename ? filename : "(null)", restricted);
+	fprintf(stderr, "[PGL_MOBILE] pgl_mobile_is_builtin_library('%s') = %d\n",
+					filename, pgl_mobile_is_builtin_library(filename));
+
+	if (!pgl_mobile_is_builtin_library(filename))
+		ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot load extension \"%s\" on mobile platform",
+										filename),
+						 errhint("This extension is not compiled into the mobile build.")));
+
+	/* For built-in extensions, call _PG_init if available */
+	{
+		PG_init_t PG_init = (PG_init_t)pgl_mobile_lookup_symbol("_PG_init");
+		fprintf(stderr, "[PGL_MOBILE] _PG_init lookup returned %p\n", (void *)PG_init);
+		if (PG_init)
+			(*PG_init)();
+	}
+#else
+	char *fullname;
 
 	/* Apply security restriction if requested */
 	if (restricted)
@@ -156,9 +215,10 @@ load_file(const char *filename, bool restricted)
 	fullname = expand_dynamic_library_name(filename);
 
 	/* Load the shared library */
-	(void) internal_load_library(fullname);
+	(void)internal_load_library(fullname);
 
 	pfree(fullname);
+#endif /* PGL_MOBILE */
 }
 
 /*
@@ -168,9 +228,13 @@ load_file(const char *filename, bool restricted)
 void *
 lookup_external_function(void *filehandle, const char *funcname)
 {
+#ifdef PGL_MOBILE
+	/* On mobile, use static registry */
+	return pgl_mobile_lookup_symbol(funcname);
+#else
 	return dlsym(filehandle, funcname);
+#endif
 }
-
 
 /*
  * Load the specified dynamic-link library file, unless it already is
@@ -188,17 +252,17 @@ internal_load_library(const char *libname)
 {
 	DynamicFileList *file_scanner;
 	PGModuleMagicFunction magic_func;
-	char	   *load_error;
+	char *load_error;
 	struct stat stat_buf;
-	PG_init_t	PG_init;
+	PG_init_t PG_init;
 
 	/*
 	 * Scan the list of loaded FILES to see if the file has been loaded.
 	 */
 	for (file_scanner = file_list;
-		 file_scanner != NULL &&
-		 strcmp(libname, file_scanner->filename) != 0;
-		 file_scanner = file_scanner->next)
+			 file_scanner != NULL &&
+			 strcmp(libname, file_scanner->filename) != 0;
+			 file_scanner = file_scanner->next)
 		;
 
 	if (file_scanner == NULL)
@@ -208,14 +272,14 @@ internal_load_library(const char *libname)
 		 */
 		if (stat(libname, &stat_buf) == -1)
 			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not access file \"%s\": %m",
-							libname)));
+							(errcode_for_file_access(),
+							 errmsg("could not access file \"%s\": %m",
+											libname)));
 
 		for (file_scanner = file_list;
-			 file_scanner != NULL &&
-			 !SAME_INODE(stat_buf, *file_scanner);
-			 file_scanner = file_scanner->next)
+				 file_scanner != NULL &&
+				 !SAME_INODE(stat_buf, *file_scanner);
+				 file_scanner = file_scanner->next)
 			;
 	}
 
@@ -225,11 +289,11 @@ internal_load_library(const char *libname)
 		 * File not loaded yet.
 		 */
 		file_scanner = (DynamicFileList *)
-			malloc(offsetof(DynamicFileList, filename) + strlen(libname) + 1);
+				malloc(offsetof(DynamicFileList, filename) + strlen(libname) + 1);
 		if (file_scanner == NULL)
 			ereport(ERROR,
-					(errcode(ERRCODE_OUT_OF_MEMORY),
-					 errmsg("out of memory")));
+							(errcode(ERRCODE_OUT_OF_MEMORY),
+							 errmsg("out of memory")));
 
 		MemSet(file_scanner, 0, offsetof(DynamicFileList, filename));
 		strcpy(file_scanner->filename, libname);
@@ -246,20 +310,20 @@ internal_load_library(const char *libname)
 			free(file_scanner);
 			/* errcode_for_file_access might not be appropriate here? */
 			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not load library \"%s\": %s",
-							libname, load_error)));
+							(errcode_for_file_access(),
+							 errmsg("could not load library \"%s\": %s",
+											libname, load_error)));
 		}
 
 		/* Check the magic function to determine compatibility */
 		magic_func = (PGModuleMagicFunction)
-			dlsym(file_scanner->handle, PG_MAGIC_FUNCTION_NAME_STRING);
+				dlsym(file_scanner->handle, PG_MAGIC_FUNCTION_NAME_STRING);
 		if (magic_func)
 		{
-			const Pg_magic_struct *magic_data_ptr = (*magic_func) ();
+			const Pg_magic_struct *magic_data_ptr = (*magic_func)();
 
 			if (magic_data_ptr->len != magic_data.len ||
-				memcmp(magic_data_ptr, &magic_data, magic_data.len) != 0)
+					memcmp(magic_data_ptr, &magic_data, magic_data.len) != 0)
 			{
 				/* copy data block before unlinking library */
 				Pg_magic_struct module_magic_data = *magic_data_ptr;
@@ -279,17 +343,17 @@ internal_load_library(const char *libname)
 			free(file_scanner);
 			/* complain */
 			ereport(ERROR,
-					(errmsg("incompatible library \"%s\": missing magic block",
-							libname),
-					 errhint("Extension libraries are required to use the PG_MODULE_MAGIC macro.")));
+							(errmsg("incompatible library \"%s\": missing magic block",
+											libname),
+							 errhint("Extension libraries are required to use the PG_MODULE_MAGIC macro.")));
 		}
 
 		/*
 		 * If the library has a _PG_init() function, call it.
 		 */
-		PG_init = (PG_init_t) dlsym(file_scanner->handle, "_PG_init");
+		PG_init = (PG_init_t)dlsym(file_scanner->handle, "_PG_init");
 		if (PG_init)
-			(*PG_init) ();
+			(*PG_init)();
 
 		/* OK to link it into list */
 		if (file_list == NULL)
@@ -307,7 +371,7 @@ internal_load_library(const char *libname)
  */
 static void
 incompatible_module_error(const char *libname,
-						  const Pg_magic_struct *module_magic_data)
+													const Pg_magic_struct *module_magic_data)
 {
 	StringInfoData details;
 
@@ -317,20 +381,20 @@ incompatible_module_error(const char *libname,
 	 */
 	if (magic_data.version != module_magic_data->version)
 	{
-		char		library_version[32];
+		char library_version[32];
 
 		if (module_magic_data->version >= 1000)
 			snprintf(library_version, sizeof(library_version), "%d",
-					 module_magic_data->version / 100);
+							 module_magic_data->version / 100);
 		else
 			snprintf(library_version, sizeof(library_version), "%d.%d",
-					 module_magic_data->version / 100,
-					 module_magic_data->version % 100);
+							 module_magic_data->version / 100,
+							 module_magic_data->version % 100);
 		ereport(ERROR,
-				(errmsg("incompatible library \"%s\": version mismatch",
-						libname),
-				 errdetail("Server is version %d, library is version %s.",
-						   magic_data.version / 100, library_version)));
+						(errmsg("incompatible library \"%s\": version mismatch",
+										libname),
+						 errdetail("Server is version %d, library is version %s.",
+											 magic_data.version / 100, library_version)));
 	}
 
 	/*
@@ -341,11 +405,11 @@ incompatible_module_error(const char *libname,
 	if (strcmp(module_magic_data->abi_extra, magic_data.abi_extra) != 0)
 	{
 		ereport(ERROR,
-				(errmsg("incompatible library \"%s\": ABI mismatch",
-						libname),
-				 errdetail("Server has ABI \"%s\", library has \"%s\".",
-						   magic_data.abi_extra,
-						   module_magic_data->abi_extra)));
+						(errmsg("incompatible library \"%s\": ABI mismatch",
+										libname),
+						 errdetail("Server has ABI \"%s\", library has \"%s\".",
+											 magic_data.abi_extra,
+											 module_magic_data->abi_extra)));
 	}
 
 	/*
@@ -361,48 +425,47 @@ incompatible_module_error(const char *libname,
 		if (details.len)
 			appendStringInfoChar(&details, '\n');
 		appendStringInfo(&details,
-						 _("Server has FUNC_MAX_ARGS = %d, library has %d."),
-						 magic_data.funcmaxargs,
-						 module_magic_data->funcmaxargs);
+										 _("Server has FUNC_MAX_ARGS = %d, library has %d."),
+										 magic_data.funcmaxargs,
+										 module_magic_data->funcmaxargs);
 	}
 	if (module_magic_data->indexmaxkeys != magic_data.indexmaxkeys)
 	{
 		if (details.len)
 			appendStringInfoChar(&details, '\n');
 		appendStringInfo(&details,
-						 _("Server has INDEX_MAX_KEYS = %d, library has %d."),
-						 magic_data.indexmaxkeys,
-						 module_magic_data->indexmaxkeys);
+										 _("Server has INDEX_MAX_KEYS = %d, library has %d."),
+										 magic_data.indexmaxkeys,
+										 module_magic_data->indexmaxkeys);
 	}
 	if (module_magic_data->namedatalen != magic_data.namedatalen)
 	{
 		if (details.len)
 			appendStringInfoChar(&details, '\n');
 		appendStringInfo(&details,
-						 _("Server has NAMEDATALEN = %d, library has %d."),
-						 magic_data.namedatalen,
-						 module_magic_data->namedatalen);
+										 _("Server has NAMEDATALEN = %d, library has %d."),
+										 magic_data.namedatalen,
+										 module_magic_data->namedatalen);
 	}
 	if (module_magic_data->float8byval != magic_data.float8byval)
 	{
 		if (details.len)
 			appendStringInfoChar(&details, '\n');
 		appendStringInfo(&details,
-						 _("Server has FLOAT8PASSBYVAL = %s, library has %s."),
-						 magic_data.float8byval ? "true" : "false",
-						 module_magic_data->float8byval ? "true" : "false");
+										 _("Server has FLOAT8PASSBYVAL = %s, library has %s."),
+										 magic_data.float8byval ? "true" : "false",
+										 module_magic_data->float8byval ? "true" : "false");
 	}
 
 	if (details.len == 0)
 		appendStringInfoString(&details,
-							   _("Magic block has unexpected length or padding difference."));
+													 _("Magic block has unexpected length or padding difference."));
 
 	ereport(ERROR,
-			(errmsg("incompatible library \"%s\": magic block mismatch",
-					libname),
-			 errdetail_internal("%s", details.data)));
+					(errmsg("incompatible library \"%s\": magic block mismatch",
+									libname),
+					 errdetail_internal("%s", details.data)));
 }
-
 
 /*
  * If name contains a slash, check if the file exists, if so return
@@ -416,9 +479,9 @@ incompatible_module_error(const char *libname,
 static char *
 expand_dynamic_library_name(const char *name)
 {
-	bool		have_slash;
-	char	   *new;
-	char	   *full;
+	bool have_slash;
+	char *new;
+	char *full;
 
 	Assert(name);
 
@@ -472,11 +535,11 @@ static void
 check_restricted_library_name(const char *name)
 {
 	if (strncmp(name, "$libdir/plugins/", 16) != 0 ||
-		first_dir_separator(name + 16) != NULL)
+			first_dir_separator(name + 16) != NULL)
 		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("access to library \"%s\" is not allowed",
-						name)));
+						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+						 errmsg("access to library \"%s\" is not allowed",
+										name)));
 }
 
 /*
@@ -498,15 +561,14 @@ substitute_libpath_macro(const char *name)
 		sep_ptr = name + strlen(name);
 
 	if (strlen("$libdir") != sep_ptr - name ||
-		strncmp(name, "$libdir", strlen("$libdir")) != 0)
+			strncmp(name, "$libdir", strlen("$libdir")) != 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_NAME),
-				 errmsg("invalid macro name in dynamic library path: %s",
-						name)));
+						(errcode(ERRCODE_INVALID_NAME),
+						 errmsg("invalid macro name in dynamic library path: %s",
+										name)));
 
 	return psprintf("%s%s", pkglib_path, sep_ptr);
 }
-
 
 /*
  * Search for a file called 'basename' in the colon-separated search
@@ -518,7 +580,7 @@ static char *
 find_in_dynamic_libpath(const char *basename)
 {
 	const char *p;
-	size_t		baselen;
+	size_t baselen;
 
 	Assert(basename != NULL);
 	Assert(first_dir_separator(basename) == NULL);
@@ -532,16 +594,16 @@ find_in_dynamic_libpath(const char *basename)
 
 	for (;;)
 	{
-		size_t		len;
-		char	   *piece;
-		char	   *mangled;
-		char	   *full;
+		size_t len;
+		char *piece;
+		char *mangled;
+		char *full;
 
 		piece = first_path_var_separator(p);
 		if (piece == p)
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_NAME),
-					 errmsg("zero-length component in parameter \"dynamic_library_path\"")));
+							(errcode(ERRCODE_INVALID_NAME),
+							 errmsg("zero-length component in parameter \"dynamic_library_path\"")));
 
 		if (piece == NULL)
 			len = strlen(p);
@@ -559,8 +621,8 @@ find_in_dynamic_libpath(const char *basename)
 		/* only absolute paths */
 		if (!is_absolute_path(mangled))
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_NAME),
-					 errmsg("component in parameter \"dynamic_library_path\" is not an absolute path")));
+							(errcode(ERRCODE_INVALID_NAME),
+							 errmsg("component in parameter \"dynamic_library_path\" is not an absolute path")));
 
 		full = palloc(strlen(mangled) + 1 + baselen + 1);
 		sprintf(full, "%s/%s", mangled, basename);
@@ -582,7 +644,6 @@ find_in_dynamic_libpath(const char *basename)
 	return NULL;
 }
 
-
 /*
  * Find (or create) a rendezvous variable that one dynamically
  * loaded library can use to meet up with another.
@@ -598,32 +659,32 @@ find_in_dynamic_libpath(const char *basename)
  * to find each other and share information: they just need to agree
  * on the variable name and the data it will point to.
  */
-void	  **
+void **
 find_rendezvous_variable(const char *varName)
 {
 	static HTAB *rendezvousHash = NULL;
 
 	rendezvousHashEntry *hentry;
-	bool		found;
+	bool found;
 
 	/* Create a hashtable if we haven't already done so in this process */
 	if (rendezvousHash == NULL)
 	{
-		HASHCTL		ctl;
+		HASHCTL ctl;
 
 		ctl.keysize = NAMEDATALEN;
 		ctl.entrysize = sizeof(rendezvousHashEntry);
 		rendezvousHash = hash_create("Rendezvous variable hash",
-									 16,
-									 &ctl,
-									 HASH_ELEM | HASH_STRINGS);
+																 16,
+																 &ctl,
+																 HASH_ELEM | HASH_STRINGS);
 	}
 
 	/* Find or create the hashtable entry for this varName */
-	hentry = (rendezvousHashEntry *) hash_search(rendezvousHash,
-												 varName,
-												 HASH_ENTER,
-												 &found);
+	hentry = (rendezvousHashEntry *)hash_search(rendezvousHash,
+																							varName,
+																							HASH_ENTER,
+																							&found);
 
 	/* Initialize to NULL if first time */
 	if (!found)
@@ -636,15 +697,14 @@ find_rendezvous_variable(const char *varName)
  * Estimate the amount of space needed to serialize the list of libraries
  * we have loaded.
  */
-Size
-EstimateLibraryStateSpace(void)
+Size EstimateLibraryStateSpace(void)
 {
 	DynamicFileList *file_scanner;
-	Size		size = 1;
+	Size size = 1;
 
 	for (file_scanner = file_list;
-		 file_scanner != NULL;
-		 file_scanner = file_scanner->next)
+			 file_scanner != NULL;
+			 file_scanner = file_scanner->next)
 		size = add_size(size, strlen(file_scanner->filename) + 1);
 
 	return size;
@@ -653,16 +713,15 @@ EstimateLibraryStateSpace(void)
 /*
  * Serialize the list of libraries we have loaded to a chunk of memory.
  */
-void
-SerializeLibraryState(Size maxsize, char *start_address)
+void SerializeLibraryState(Size maxsize, char *start_address)
 {
 	DynamicFileList *file_scanner;
 
 	for (file_scanner = file_list;
-		 file_scanner != NULL;
-		 file_scanner = file_scanner->next)
+			 file_scanner != NULL;
+			 file_scanner = file_scanner->next)
 	{
-		Size		len;
+		Size len;
 
 		len = strlcpy(start_address, file_scanner->filename, maxsize) + 1;
 		Assert(len < maxsize);
@@ -675,8 +734,7 @@ SerializeLibraryState(Size maxsize, char *start_address)
 /*
  * Load every library the serializing backend had loaded.
  */
-void
-RestoreLibraryState(char *start_address)
+void RestoreLibraryState(char *start_address)
 {
 	while (*start_address != '\0')
 	{
