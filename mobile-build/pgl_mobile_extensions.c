@@ -9,6 +9,12 @@
  * Instead, we compile extension code directly into libpglite and provide a
  * static registry that maps function names to their addresses.
  *
+ * EXTERNAL EXTENSION SUPPORT:
+ * This file provides weak hooks that can be overridden by app-generated code
+ * to add additional extension registries. The Expo config plugin generates
+ * a pgl_extension_registry.c file that implements these hooks to register
+ * extension functions from packages like @react-native-pglite/postgis.
+ *
  * LINKER INTEGRATION:
  * The pgl_mobile_force_link_extensions() function creates explicit references
  * to all extension functions. This function MUST be called from somewhere in
@@ -23,6 +29,12 @@
  * 3. Add references in pgl_mobile_force_link_extensions()
  * 4. Compile the extension's .c file into the library (in build-mobile.sh)
  * 5. Copy the extension's SQL files to share/extension/
+ *
+ * OR (for modular extensions via npm packages):
+ * 1. Create extension package with XCFrameworks and symbol headers
+ * 2. Add extension to app.config.js
+ * 3. Run expo prebuild - plugin generates pgl_extension_registry.c
+ * 4. Xcode links everything together
  */
 
 #include "postgres.h"
@@ -45,7 +57,12 @@ static void pgl_mobile_PG_init_stub(void) {}
 extern Datum plpgsql_call_handler(PG_FUNCTION_ARGS);
 extern Datum plpgsql_inline_handler(PG_FUNCTION_ARGS);
 extern Datum plpgsql_validator(PG_FUNCTION_ARGS);
-extern void _PG_init(void); /* plpgsql's init */
+/*
+ * Use the mobile-specific alias plpgsql_PG_init instead of _PG_init.
+ * This avoids conflicts with other extensions that also define _PG_init
+ * (like libpqwalreceiver) when statically linked.
+ */
+extern void plpgsql_PG_init(void);
 
 /* pg_finfo functions for plpgsql */
 extern const Pg_finfo_record *pg_finfo_plpgsql_call_handler(void);
@@ -172,7 +189,7 @@ __attribute__((used)) static const pgl_mobile_symbol_entry pgl_mobile_extension_
     {"plpgsql_call_handler", (void *)plpgsql_call_handler},
     {"plpgsql_inline_handler", (void *)plpgsql_inline_handler},
     {"plpgsql_validator", (void *)plpgsql_validator},
-    {"_PG_init", (void *)_PG_init},
+    {"_PG_init", (void *)plpgsql_PG_init},  /* Use mobile-specific alias */
     {"pg_finfo_plpgsql_call_handler", (void *)pg_finfo_plpgsql_call_handler},
     {"pg_finfo_plpgsql_inline_handler", (void *)pg_finfo_plpgsql_inline_handler},
     {"pg_finfo_plpgsql_validator", (void *)pg_finfo_plpgsql_validator},
@@ -277,35 +294,100 @@ pgl_mobile_Pg_magic_func(void)
  * Public API Implementation
  * ============================================================ */
 
+/* Forward declarations for external extension hooks (weak symbols - fallback) */
+extern void *pgl_external_lookup_symbol(const char *symbol) __attribute__((weak));
+extern bool pgl_external_is_builtin_library(const char *libname) __attribute__((weak));
+extern void pgl_external_force_link_extensions(void) __attribute__((weak));
+
+/* ============================================================
+ * Registered Extension Hooks (Function Pointer Pattern)
+ *
+ * This pattern bypasses weak symbol linking issues by using explicit
+ * function pointer registration. Extensions call pgl_register_*()
+ * during initialization (via __attribute__((constructor))).
+ * ============================================================ */
+typedef void *(*pgl_lookup_fn)(const char *symbol);
+typedef bool (*pgl_is_builtin_fn)(const char *libname);
+typedef void (*pgl_force_link_fn)(void);
+
+/* Registered function pointers (NULL by default) */
+static pgl_lookup_fn pgl_registered_lookup_symbol = NULL;
+static pgl_is_builtin_fn pgl_registered_is_builtin_library = NULL;
+static pgl_force_link_fn pgl_registered_force_link_extensions = NULL;
+
+/* Public registration functions - called by generated extension registries */
+void pgl_register_external_lookup(pgl_lookup_fn fn)
+{
+  fprintf(stderr, "[PGL_EXT] Registering external lookup function: %p\n", (void *)fn);
+  pgl_registered_lookup_symbol = fn;
+}
+
+void pgl_register_external_is_builtin(pgl_is_builtin_fn fn)
+{
+  fprintf(stderr, "[PGL_EXT] Registering external is_builtin function: %p\n", (void *)fn);
+  pgl_registered_is_builtin_library = fn;
+}
+
+void pgl_register_external_force_link(pgl_force_link_fn fn)
+{
+  fprintf(stderr, "[PGL_EXT] Registering external force_link function: %p\n", (void *)fn);
+  pgl_registered_force_link_extensions = fn;
+}
+
 /*
  * Lookup a symbol in the static extension registry.
+ * First checks built-in extensions, then external extension registries.
  */
 void *
 pgl_mobile_lookup_symbol(const char *symbol)
 {
   const pgl_mobile_symbol_entry *entry;
+  void *result;
 
   if (symbol == NULL)
     return NULL;
 
   fprintf(stderr, "[PGL_EXT] pgl_mobile_lookup_symbol('%s') searching...\n", symbol);
 
+  /* First, check built-in extensions */
   for (entry = pgl_mobile_extension_symbols; entry->name != NULL; entry++)
   {
     if (strcmp(entry->name, symbol) == 0)
     {
-      fprintf(stderr, "[PGL_EXT] Found '%s' at %p\n", symbol, entry->address);
+      fprintf(stderr, "[PGL_EXT] Found '%s' in built-in registry at %p\n", symbol, entry->address);
       return entry->address;
     }
   }
 
-  fprintf(stderr, "[PGL_EXT] Symbol '%s' NOT FOUND in registry\n", symbol);
+  /* Then, check registered external extension function (priority over weak symbols) */
+  if (pgl_registered_lookup_symbol != NULL)
+  {
+    result = pgl_registered_lookup_symbol(symbol);
+    if (result != NULL)
+    {
+      fprintf(stderr, "[PGL_EXT] Found '%s' in registered external registry at %p\n", symbol, result);
+      return result;
+    }
+  }
+
+  /* Fallback: check weak external extension registries */
+  if (pgl_external_lookup_symbol != NULL)
+  {
+    result = pgl_external_lookup_symbol(symbol);
+    if (result != NULL)
+    {
+      fprintf(stderr, "[PGL_EXT] Found '%s' in weak external registry at %p\n", symbol, result);
+      return result;
+    }
+  }
+
+  fprintf(stderr, "[PGL_EXT] Symbol '%s' NOT FOUND in any registry\n", symbol);
   return NULL;
 }
 
 /*
  * Check if a library name refers to a built-in extension.
- * We match against known extension library names.
+ * We match against known extension library names, then check external registries.
  */
 bool pgl_mobile_is_builtin_library(const char *libname)
 {
@@ -339,6 +421,20 @@ bool pgl_mobile_is_builtin_library(const char *libname)
   }
 #endif
 
+  /* Check registered external extension function (priority over weak symbols) */
+  if (pgl_registered_is_builtin_library != NULL && pgl_registered_is_builtin_library(libname))
+  {
+    fprintf(stderr, "[PGL_EXT] '%s' matched registered external extension - returning true\n", libname);
+    return true;
+  }
+
+  /* Fallback: check weak external extension registries */
+  if (pgl_external_is_builtin_library != NULL && pgl_external_is_builtin_library(libname))
+  {
+    fprintf(stderr, "[PGL_EXT] '%s' matched weak external extension - returning true\n", libname);
+    return true;
+  }
+
   fprintf(stderr, "[PGL_EXT] '%s' not a builtin library - returning false\n", libname);
   return false;
 }
@@ -361,7 +457,7 @@ void pgl_mobile_force_link_extensions(void)
   _pgl_force_link_sink = (void *)plpgsql_call_handler;
   _pgl_force_link_sink = (void *)plpgsql_inline_handler;
   _pgl_force_link_sink = (void *)plpgsql_validator;
-  _pgl_force_link_sink = (void *)_PG_init;
+  _pgl_force_link_sink = (void *)plpgsql_PG_init;  /* Use mobile-specific alias */
   _pgl_force_link_sink = (void *)pg_finfo_plpgsql_call_handler;
   _pgl_force_link_sink = (void *)pg_finfo_plpgsql_inline_handler;
   _pgl_force_link_sink = (void *)pg_finfo_plpgsql_validator;
@@ -384,5 +480,69 @@ void pgl_mobile_force_link_extensions(void)
   _pgl_force_link_sink = (void *)pg_finfo_hstore_in;
 #endif
 
+  /* Call registered external extension force link if available (priority) */
+  if (pgl_registered_force_link_extensions != NULL)
+  {
+    pgl_registered_force_link_extensions();
+  }
+
+  /* Fallback: call weak external extension force link if available */
+  if (pgl_external_force_link_extensions != NULL)
+  {
+    pgl_external_force_link_extensions();
+  }
+
   fprintf(stderr, "[PGL_EXT] pgl_mobile_force_link_extensions() called - extensions linked\n");
+}
+
+/* ============================================================
+ * External Extension Registry Hooks
+ *
+ * These weak functions provide hooks for external extension packages.
+ * When an app includes extensions like @react-native-pglite/postgis,
+ * the Expo config plugin generates a pgl_extension_registry.c file
+ * that provides strong implementations of these functions.
+ *
+ * The __attribute__((weak)) allows these to be overridden at link time.
+ * ============================================================ */
+
+/*
+ * Weak default: lookup symbol in external registries.
+ * Returns NULL if no external registries or symbol not found.
+ * Override this to add extension symbol lookups.
+ */
+__attribute__((weak)) void *pgl_external_lookup_symbol(const char *symbol)
+{
+  /* Default: no external extensions */
+  return NULL;
+}
+
+/*
+ * Weak default: check if library is an external extension.
+ * Returns false if no external extensions or library not recognized.
+ * Override this to add extension library checks.
+ */
+__attribute__((weak)) bool pgl_external_is_builtin_library(const char *libname)
+{
+  /* Default: no external extensions */
+  return false;
+}
+
+/*
+ * Weak default: force link external extension symbols.
+ * Does nothing if no external extensions.
+ * Override this to add force link references for extension functions.
+ */
+__attribute__((weak)) void pgl_external_force_link_extensions(void)
+{
+  /* Default: no external extensions to link */
+}
+
+/*
+ * Weak default: get count of external extension symbol entries.
+ * Returns 0 if no external extensions.
+ */
+__attribute__((weak)) int pgl_external_get_symbol_count(void)
+{
+  return 0;
 }

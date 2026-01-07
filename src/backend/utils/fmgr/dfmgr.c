@@ -116,18 +116,60 @@ load_external_function(const char *filename, const char *funcname,
 	 * Instead, look up the function in our static extension registry.
 	 */
 	void *retval;
+	static bool plpgsql_initialized = false;
 
-	/* Debug logging */
+	/* Debug logging with fflush after every line */
 	fprintf(stderr, "[PGL_MOBILE] load_external_function: filename='%s' funcname='%s'\n",
 					filename ? filename : "(null)", funcname ? funcname : "(null)");
+	fflush(stderr);
+
+	fprintf(stderr, "[PGL_MOBILE] plpgsql_initialized=%d, checking filename...\n", plpgsql_initialized);
+	fflush(stderr);
+
+	/*
+	 * CRITICAL: plpgsql requires _PG_init to be called before any of its
+	 * functions can work. This initializes globals like simple_eval_estate.
+	 * Without this, DO blocks and other PL/pgSQL features will crash.
+	 */
+	if (filename && strstr(filename, "plpgsql") != NULL && !plpgsql_initialized)
+	{
+		fprintf(stderr, "[PGL_MOBILE] plpgsql detected in filename, looking up _PG_init...\n");
+		fflush(stderr);
+		PG_init_t PG_init = (PG_init_t)pgl_mobile_lookup_symbol("_PG_init");
+		fprintf(stderr, "[PGL_MOBILE] _PG_init lookup returned %p\n", (void *)PG_init);
+		fflush(stderr);
+		if (PG_init)
+		{
+			fprintf(stderr, "[PGL_MOBILE] Calling plpgsql _PG_init()...\n");
+			fflush(stderr);
+			PG_init();
+			plpgsql_initialized = true;
+			fprintf(stderr, "[PGL_MOBILE] plpgsql _PG_init() completed successfully\n");
+			fflush(stderr);
+		}
+		else
+		{
+			fprintf(stderr, "[PGL_MOBILE] WARNING: plpgsql _PG_init not found in symbol registry!\n");
+			fflush(stderr);
+		}
+	}
+	else
+	{
+		fprintf(stderr, "[PGL_MOBILE] Skipping plpgsql init (already done or not plpgsql)\n");
+		fflush(stderr);
+	}
 
 	/* For mobile, filehandle is not meaningful - just set to non-NULL sentinel */
 	if (filehandle)
 		*filehandle = (void *)1;
 
+	fprintf(stderr, "[PGL_MOBILE] About to look up funcname='%s' in registry...\n", funcname);
+	fflush(stderr);
+
 	/* Look up in static registry */
 	retval = pgl_mobile_lookup_symbol(funcname);
 	fprintf(stderr, "[PGL_MOBILE] pgl_mobile_lookup_symbol('%s') returned %p\n", funcname, retval);
+	fflush(stderr);
 
 	if (retval == NULL && signalNotFound)
 		ereport(ERROR,
@@ -136,6 +178,8 @@ load_external_function(const char *filename, const char *funcname,
 										funcname, filename),
 						 errhint("This extension may not be compiled into the mobile build.")));
 
+	fprintf(stderr, "[PGL_MOBILE] load_external_function returning %p\n", retval);
+	fflush(stderr);
 	return retval;
 #else
 	char *fullname;
@@ -198,11 +242,27 @@ void load_file(const char *filename, bool restricted)
 						 errhint("This extension is not compiled into the mobile build.")));
 
 	/* For built-in extensions, call _PG_init if available */
+	/* We need to track which libraries have been initialized to avoid double-init */
 	{
-		PG_init_t PG_init = (PG_init_t)pgl_mobile_lookup_symbol("_PG_init");
-		fprintf(stderr, "[PGL_MOBILE] _PG_init lookup returned %p\n", (void *)PG_init);
-		if (PG_init)
-			(*PG_init)();
+		static bool plpgsql_initialized = false;
+		const char *libname = strrchr(filename, '/');
+		libname = libname ? libname + 1 : filename;
+
+		fprintf(stderr, "[PGL_MOBILE] load_file: checking _PG_init for library '%s'\n", libname);
+
+		/* plpgsql is special - it's the only one that MUST have _PG_init called */
+		if (strstr(libname, "plpgsql") != NULL && !plpgsql_initialized)
+		{
+			PG_init_t PG_init = (PG_init_t)pgl_mobile_lookup_symbol("_PG_init");
+			fprintf(stderr, "[PGL_MOBILE] plpgsql _PG_init lookup returned %p\n", (void *)PG_init);
+			if (PG_init)
+			{
+				fprintf(stderr, "[PGL_MOBILE] Calling plpgsql _PG_init()\n");
+				(*PG_init)();
+				plpgsql_initialized = true;
+				fprintf(stderr, "[PGL_MOBILE] plpgsql _PG_init() completed\n");
+			}
+		}
 	}
 #else
 	char *fullname;

@@ -549,3 +549,19 @@ plpgsql_validator(PG_FUNCTION_ARGS)
 
 	PG_RETURN_VOID();
 }
+
+#ifdef PGL_MOBILE
+/*
+ * Mobile-specific alias for plpgsql's _PG_init.
+ * 
+ * On mobile platforms, all extensions are linked into a single binary,
+ * causing duplicate _PG_init symbols (plpgsql, libpqwalreceiver, etc.).
+ * This alias provides a unique entry point for plpgsql initialization
+ * that the mobile extension registry can reference unambiguously.
+ */
+void
+plpgsql_PG_init(void)
+{
+	_PG_init();
+}
+#endif /* PGL_MOBILE */
