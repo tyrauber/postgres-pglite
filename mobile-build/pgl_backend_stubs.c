@@ -8,13 +8,13 @@
 #include "../pglite-wasm/pgl_os.h"
 
 #include "postgres.h"
-#include "miscadmin.h"          // BackendType, sig_atomic_t globals
-#include "storage/latch.h"      // Latch, MyLatch
-#include "postmaster/bgworker.h"// BackgroundWorker
-#include "libpq/libpq-be.h"   // Port definition
+#include "miscadmin.h"           // BackendType, sig_atomic_t globals
+#include "storage/latch.h"       // Latch, MyLatch
+#include "postmaster/bgworker.h" // BackgroundWorker
+#include "libpq/libpq-be.h"      // Port definition
 
-#include "utils/timeout.h"      // TimeoutId, TimestampTz
-#include "storage/shmem.h"      // Size, ShmemInitStruct
+#include "utils/timeout.h" // TimeoutId, TimestampTz
+#include "storage/shmem.h" // Size, ShmemInitStruct
 
 // Provide weak default definitions so real backend objects can override if linked
 volatile sig_atomic_t InterruptPending __attribute__((weak)) = 0;
@@ -75,20 +75,42 @@ void __attribute__((weak)) HandleParallelApplyMessages(void) {}
 bool __attribute__((weak)) pq_check_connection(void) { return true; }
 bool __attribute__((weak)) IsTransactionOrTransactionBlock(void) { return false; }
 
-void __attribute__((weak)) enable_timeout_after(TimeoutId id, int delay) { (void)id; (void)delay; }
-bool __attribute__((weak)) get_timeout_indicator(TimeoutId id, bool reset) { (void)id; (void)reset; return false; }
-TimestampTz __attribute__((weak)) get_timeout_finish_time(TimeoutId id) { (void)id; return 0; }
+void __attribute__((weak)) enable_timeout_after(TimeoutId id, int delay)
+{
+  (void)id;
+  (void)delay;
+}
+bool __attribute__((weak)) get_timeout_indicator(TimeoutId id, bool reset)
+{
+  (void)id;
+  (void)reset;
+  return false;
+}
+TimestampTz __attribute__((weak)) get_timeout_finish_time(TimeoutId id)
+{
+  (void)id;
+  return 0;
+}
 
 // Shared memory helpers stubs (satisfy link-time deps from sinval/procsignal)
 
 // Timeouts: provide safe no-op implementations used during startup/single-user
-void disable_timeout(TimeoutId id, bool keep_indicator) { (void)id; (void)keep_indicator; }
+void disable_timeout(TimeoutId id, bool keep_indicator)
+{
+  (void)id;
+  (void)keep_indicator;
+}
 void disable_all_timeouts(bool keep_indicator) { (void)keep_indicator; }
 void reschedule_timeouts(void) {}
 
-void * __attribute__((weak)) ShmemInitStruct(const char *name, Size size, bool *found)
+void *__attribute__((weak)) ShmemInitStruct(const char *name, Size size, bool *found)
 {
-  (void)name; (void)size; if (found) *found = true; static int dummy; return &dummy;
+  (void)name;
+  (void)size;
+  if (found)
+    *found = true;
+  static int dummy;
+  return &dummy;
 }
 
 // Safe size helpers (normally in libpgcommon)
@@ -101,12 +123,14 @@ void __attribute__((weak)) pgstat_report_stat(bool force) { (void)force; }
 // Graceful exit hook used by pg_shutdown and bootstrap
 // Intercept proc_exit during bootstrap by longjmping to pgl_boot_jmp if set
 #include <setjmp.h>
-extern volatile sigjmp_buf* pgl_boot_jmp; // defined in pg_main.c
-void proc_exit(int code) {
+extern volatile sigjmp_buf *pgl_boot_jmp; // defined in pg_main.c
+void proc_exit(int code)
+{
   (void)code;
-  if (pgl_boot_jmp) {
+  if (pgl_boot_jmp)
+  {
     // Jump back to caller to avoid PANIC/exit in bootstrap context
-    siglongjmp(*(sigjmp_buf*)pgl_boot_jmp, 1);
+    siglongjmp(*(sigjmp_buf *)pgl_boot_jmp, 1);
   }
   // Outside bootstrap, do nothing — avoid exiting the host process.
 }
@@ -116,13 +140,16 @@ void proc_exit(int code) {
 // recovery code depends on. Socket operations in pq_init are now properly guarded
 // to skip on mobile platforms while preserving essential buffer initialization.
 
-
 void pg_proc_exit(int code) { proc_exit(code); }
 
 // WASM pipe emulation symbols expected by interactive_one.c
-FILE * __attribute__((weak)) SOCKET_FILE = NULL;
+FILE *__attribute__((weak)) SOCKET_FILE = NULL;
 int __attribute__((weak)) SOCKET_DATA = 0;
-void __attribute__((weak)) pq_recvbuf_fill(FILE* fp, int packetlen) { (void)fp; (void)packetlen; }
+void __attribute__((weak)) pq_recvbuf_fill(FILE *fp, int packetlen)
+{
+  (void)fp;
+  (void)packetlen;
+}
 
 // Removed pq_getbyte and pq_getbytes overrides - these should NOT be overridden!
 // PostgreSQL's pq_getbyte/pq_getbytes work through PQcommMethods which we've
@@ -133,3 +160,176 @@ void __attribute__((weak)) pq_recvbuf_fill(FILE* fp, int packetlen) { (void)fp; 
 bool __attribute__((weak)) IsLogicalWorker(void) { return false; }
 bool __attribute__((weak)) IsLogicalLauncher(void) { return false; }
 
+// =============================================================================
+// Semaphore stubs for mobile (single-user mode, no IPC needed)
+// =============================================================================
+// iOS doesn't support sem_open() in sandboxed apps, and System V semaphores
+// require kernel support not available on iOS. Since PGLite runs in single-user
+// mode without multiple backend processes, we can stub these out safely.
+//
+// NOTE: These are STRONG symbols (no weak attribute) because we exclude
+// pg_sema.o and pg_shmem.o from the build. See build-native.sh.
+
+#include "storage/pg_sema.h"
+
+// Simple in-memory semaphore implementation for single-user mode
+typedef struct PGSemaphoreData
+{
+  int count;
+} PGSemaphoreData;
+
+// Pool of semaphores (allocated in regular heap since we don't need shared memory)
+static PGSemaphoreData *semaphorePool = NULL;
+static int numSemaphores = 0;
+static int maxSemaphores = 0;
+
+Size PGSemaphoreShmemSize(int maxSemas)
+{
+  // No shared memory needed for single-user mode
+  (void)maxSemas;
+  return 0;
+}
+
+void PGReserveSemaphores(int maxSemas)
+{
+  // Allocate semaphore pool in regular heap
+  if (semaphorePool == NULL && maxSemas > 0)
+  {
+    semaphorePool = (PGSemaphoreData *)calloc(maxSemas, sizeof(PGSemaphoreData));
+    maxSemaphores = maxSemas;
+    numSemaphores = 0;
+  }
+}
+
+PGSemaphore PGSemaphoreCreate(void)
+{
+  if (semaphorePool == NULL || numSemaphores >= maxSemaphores)
+  {
+    // If pool is full or not initialized, allocate new one
+    PGSemaphore sema = (PGSemaphore)calloc(1, sizeof(PGSemaphoreData));
+    if (sema)
+      sema->count = 1; // Initial count of 1
+    return sema;
+  }
+  PGSemaphore sema = &semaphorePool[numSemaphores++];
+  sema->count = 1; // Initial count of 1
+  return sema;
+}
+
+void PGSemaphoreReset(PGSemaphore sema)
+{
+  if (sema)
+    sema->count = 0;
+}
+
+void PGSemaphoreLock(PGSemaphore sema)
+{
+  // In single-user mode, just decrement count (no actual blocking needed)
+  if (sema)
+    sema->count--;
+}
+
+void PGSemaphoreUnlock(PGSemaphore sema)
+{
+  if (sema)
+    sema->count++;
+}
+
+bool PGSemaphoreTryLock(PGSemaphore sema)
+{
+  if (sema && sema->count > 0)
+  {
+    sema->count--;
+    return true;
+  }
+  return false;
+}
+
+// =============================================================================
+// Shared memory stubs - CreateSharedMemoryAndSemaphores needs these
+// =============================================================================
+// NOTE: These are STRONG symbols (no weak attribute) because we exclude
+// pg_shmem.o from the build. See build-native.sh.
+
+#include "storage/shmem.h"
+#include "storage/pg_shmem.h"
+
+// PGShm* functions are called by CreateSharedMemoryAndSemaphores
+// In single-user mode, we can use regular heap memory instead of actual shared memory
+
+static void *fakeSharedMemory = NULL;
+static Size fakeSharedMemorySize = 0;
+
+// Global variables expected by PostgreSQL
+unsigned long UsedShmemSegID = 0;
+void *UsedShmemSegAddr = NULL;
+
+PGShmemHeader *PGSharedMemoryCreate(Size size, PGShmemHeader **shim)
+{
+  // Allocate fake shared memory using calloc (heap memory for single-user mode)
+  fakeSharedMemorySize = size;
+  fakeSharedMemory = calloc(1, size);
+  if (!fakeSharedMemory)
+  {
+    // Emergency fallback - should never happen
+    return NULL;
+  }
+
+  UsedShmemSegAddr = fakeSharedMemory;
+
+  // Set up the header
+  PGShmemHeader *header = (PGShmemHeader *)fakeSharedMemory;
+  header->magic = PGShmemMagic;
+  header->creatorPID = getpid();
+  header->totalsize = size;
+  header->freeoffset = sizeof(PGShmemHeader);
+  header->dsm_control = 0;
+  header->index = NULL;
+
+  if (shim)
+    *shim = header;
+  return header;
+}
+
+bool PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2)
+{
+  (void)id1;
+  (void)id2;
+  return false; // No shared memory conflicts in single-user mode
+}
+
+void PGSharedMemoryDetach(void)
+{
+  if (fakeSharedMemory)
+  {
+    free(fakeSharedMemory);
+    fakeSharedMemory = NULL;
+    fakeSharedMemorySize = 0;
+  }
+  UsedShmemSegAddr = NULL;
+}
+
+void GetHugePageSize(Size *hugepagesize, int *mmap_flags)
+{
+  // iOS doesn't support huge pages
+  if (hugepagesize)
+    *hugepagesize = 0;
+  if (mmap_flags)
+    *mmap_flags = 0;
+}
+
+// GUC check hook for huge_page_size setting
+// This is referenced by guc_tables.c and was originally in pg_shmem.c
+#include "utils/guc.h"
+bool check_huge_page_size(int *newval, void **extra, GucSource source)
+{
+  // iOS doesn't support huge pages, so only 0 is allowed
+  (void)extra;
+  (void)source;
+  if (*newval != 0)
+  {
+    GUC_check_errdetail("\"huge_page_size\" must be 0 on this platform.");
+    return false;
+  }
+  return true;
+}
