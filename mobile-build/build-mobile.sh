@@ -395,13 +395,14 @@ build_glue_and_merge() {
   pushd "$BUILD_DIR" >/dev/null
 
   # Glue: mirror WASM by compiling pg_main.c (which includes interactive_one.c, pgl_mains.c, etc.)
+  # IMPORTANT: PGL_CATCH_EXIT converts exit() calls in initdb.c to longjmp to avoid crashing the app
   $CC \
     -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
     -I"$PGSRC/src/interfaces/libpq" \
     -I"$REPO_ROOT/mobile-build" \
     -include "$REPO_ROOT/mobile-build/wasm_common_mobile.h" \
     -include "$REPO_ROOT/mobile-build/pgl_mobile_compat.h" \
-    -DPGL_LIB_ONLY -DPGL_MOBILE -UHAVE_SHM_OPEN \
+    -DPGL_LIB_ONLY -DPGL_MOBILE -DPGL_CATCH_EXIT -UHAVE_SHM_OPEN \
     -fPIC -c "$REPO_ROOT/pglite-wasm/pg_main.c" -o pg_main.o
   # Glue extras: provide mobile alias and minimal helpers
   $CC \

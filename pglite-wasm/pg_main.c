@@ -943,7 +943,19 @@ int pgl_initdb()
     }
 
     PGL_LOG_INFO("[pgl_initdb] Calling pgl_initdb_main()...");
+#ifdef PGL_CATCH_EXIT
+    // Use the safe wrapper that catches exit() calls and converts to longjmp
+    extern int pgl_initdb_safe(void);
+    int initdb_rc = pgl_initdb_safe();
+    if (initdb_rc != 0)
+    {
+        fprintf(stderr, "[pgl_main] pgl_initdb_safe returned error: %d\n", initdb_rc);
+        PGL_LOG_INFO("[pgl_initdb] initdb failed with exit code %d", initdb_rc);
+        return pgl_idb_status | IDB_FAILED;
+    }
+#else
     int initdb_rc = pgl_initdb_main();
+#endif
     fprintf(stderr, "[pgl_main] pgl_initdb_main rc=%d\n", initdb_rc);
     PGL_LOG_INFO("[pgl_initdb] pgl_initdb_main() returned %d", initdb_rc);
     const char *skip_replay = getenv("PGL_SKIP_REPLAY");
