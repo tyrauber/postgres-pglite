@@ -21,6 +21,9 @@
 #ifndef WASM_USERNAME
 #define WASM_USERNAME "postgres"
 #endif
+// WASM_PGOPTS is empty for mobile - crash-safety settings are written
+// to postgresql.conf by PGLiteReactNative.cpp after initdb completes.
+// This is more reliable than trying to pass them via command-line args.
 #ifndef WASM_PGOPTS
 #define WASM_PGOPTS ""
 #endif

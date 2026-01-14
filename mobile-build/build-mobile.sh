@@ -420,9 +420,13 @@ build_glue_and_merge() {
   $CC \
     -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
     -I"$REPO_ROOT/mobile-build" -DPGL_MOBILE -fPIC -c "$REPO_ROOT/mobile-build/pgl_mobile_comm.c" -o pgl_mobile_comm.o
+  # Mobile extension registry for static linking (needed for PL/pgSQL init)
+  $CC \
+    -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
+    -I"$REPO_ROOT/mobile-build" -DPGL_MOBILE -fPIC -c "$REPO_ROOT/mobile-build/pgl_mobile_extensions.c" -o pgl_mobile_extensions.o
 
   # Glue archive; includes pg_main and mobile shims/stubs
-  "$AR" -r -cs libpglite_glue_mobile.a pg_main.o pgl_mobile_shims.o pgl_backend_stubs.o sdk_port-mobile.o pgl_mobile_comm.o
+  "$AR" -r -cs libpglite_glue_mobile.a pg_main.o pgl_mobile_shims.o pgl_backend_stubs.o sdk_port-mobile.o pgl_mobile_comm.o pgl_mobile_extensions.o
 
   # Merge core PG libs (reuse the server build outputs like WASM)
   # Prefer consuming installed archives if present; otherwise fall back to server variants in source tree

@@ -574,6 +574,8 @@ void main_post()
 #ifdef PGL_MOBILE
 /* Force-link extension symbols - must be called to prevent linker dead-stripping */
 extern void pgl_mobile_force_link_extensions(void);
+/* Initialize extensions that require _PG_init - fixes iOS device crash */
+extern void pgl_mobile_init_extensions(void);
 #endif
 
 __attribute__((export_name("pgl_backend"))) void pgl_backend()
@@ -736,6 +738,57 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
         //        AsyncPostgresSingleUserMain(single_argc, single_argv, PGUSER, async_restart);
         PDEBUG("# 365: initdb faking shutdown to complete WAL/OID states in single mode");
 
+        /* CRITICAL: If RePostgresSingleUserMain returned early (e.g., initdb.single.txt not found),
+         * shared memory may not be initialized. We need to ensure it's initialized before
+         * proceeding to backend_started, otherwise RecoveryInProgress() will crash
+         * accessing XLogCtl->SharedRecoveryState when XLogCtl is NULL.
+         *
+         * Check if PgStartTime is 0 (not yet set) to determine if init is needed.
+         */
+#ifdef PGL_MOBILE
+        if (PgStartTime == 0)
+        {
+            PGL_LOG_INFO("[pgl_backend] Shared memory not initialized, initializing now...");
+            fprintf(stderr, "[pgl_backend] Shared memory not initialized after RePostgresSingleUserMain, initializing...\n");
+
+            /* Read control file */
+            LocalProcessControlFile(false);
+
+            /* Load preload libraries */
+            process_shared_preload_libraries();
+
+            /* Initialize MaxBackends - required for shared memory sizing */
+            InitializeMaxBackends();
+
+            /* Process shared memory requests */
+            process_shmem_requests();
+
+            /* Initialize shared memory GUCs */
+            InitializeShmemGUCs();
+
+            /* Initialize WAL consistency checking */
+            InitializeWalConsistencyChecking();
+
+            /* CRITICAL: Initialize shared memory and semaphores */
+            CreateSharedMemoryAndSemaphores();
+
+            /* Record startup time */
+            PgStartTime = GetCurrentTimestamp();
+
+            /* Create per-backend PGPROC struct */
+            InitProcess();
+
+            /* Set processing mode - SetProcessingMode is a macro */
+            SetProcessingMode(InitProcessing);
+
+            /* Early initialization */
+            BaseInit();
+
+            PGL_LOG_INFO("[pgl_backend] Shared memory initialization complete");
+            fprintf(stderr, "[pgl_backend] Shared memory initialization complete\n");
+        }
+#endif
+
         goto backend_started;
     }
 
@@ -847,6 +900,18 @@ backend_started:;
     PGL_LOG_INFO("[pgl_mobile] Installing mobile communication methods");
     pgl_install_mobile_comm();
     PGL_LOG_INFO("[pgl_mobile] Mobile communication methods installed successfully");
+
+    /*
+     * CRITICAL: Initialize extensions that require _PG_init to be called.
+     * This fixes the iOS device crash where plpgsql_HashTable is NULL because
+     * the lazy initialization in load_external_function() may not trigger
+     * correctly on physical devices.
+     *
+     * See: docs/issues/pglite-ios-device-crash.md
+     */
+    PGL_LOG_INFO("[pgl_mobile] Initializing extensions (plpgsql, etc.)");
+    pgl_mobile_init_extensions();
+    PGL_LOG_INFO("[pgl_mobile] Extension initialization complete");
 
     PGL_LOG_INFO("[pgl_mobile] Mobile backend state initialization complete");
 #endif

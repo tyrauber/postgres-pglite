@@ -103,14 +103,19 @@ void disable_timeout(TimeoutId id, bool keep_indicator)
 void disable_all_timeouts(bool keep_indicator) { (void)keep_indicator; }
 void reschedule_timeouts(void) {}
 
-void *__attribute__((weak)) ShmemInitStruct(const char *name, Size size, bool *found)
+// ShmemInitStruct - allocate memory from fake shared memory pool
+// This is a STRONG symbol because we need proper memory allocation for XLogCtl etc.
+// The weak version was returning a tiny static int which caused crashes when
+// PostgreSQL tried to access XLogCtl->SharedRecoveryState at offset 0x144.
+void *ShmemInitStruct(const char *name, Size size, bool *found)
 {
   (void)name;
-  (void)size;
+  // Actually allocate the requested memory using calloc (zeroed)
+  // In single-user mode, we don't need true shared memory, just properly sized allocations
+  void *ptr = calloc(1, size);
   if (found)
-    *found = true;
-  static int dummy;
-  return &dummy;
+    *found = false; // Indicate this is a new allocation, not found existing
+  return ptr;
 }
 
 // Safe size helpers (normally in libpgcommon)

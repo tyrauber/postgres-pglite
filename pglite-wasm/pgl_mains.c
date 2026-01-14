@@ -176,7 +176,8 @@ printf("# 134: dbname=%s\n", dbname);
 
     process_shared_preload_libraries();
 
-//	                InitializeMaxBackends();
+    /* Initialize MaxBackends - required for shared memory sizing */
+    InitializeMaxBackends();
 
 // ? IgnoreSystemIndexes = true;
 IgnoreSystemIndexes = false;
@@ -186,9 +187,25 @@ IgnoreSystemIndexes = false;
 
     InitializeWalConsistencyChecking();
 
+    /* CRITICAL: Initialize shared memory and semaphores.
+     * This was missing and caused XLogCtl to be NULL, leading to crashes
+     * in RecoveryInProgress() when accessing XLogCtl->SharedRecoveryState.
+     * See: docs/issues/pglite-currentresourceowner-crash.md
+     */
+    CreateSharedMemoryAndSemaphores();
+
     PgStartTime = GetCurrentTimestamp();
 
+    /*
+     * Create a per-backend PGPROC struct in shared memory. We must do this
+     * before we can use LWLocks.
+     */
+    InitProcess();
+
     SetProcessingMode(InitProcessing);
+
+    /* Early initialization */
+    BaseInit();
 PDEBUG("# 153: Re-InitPostgres");
 if (am_walsender)
     PDEBUG("# 155: am_walsender == true");

@@ -40,7 +40,7 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include <string.h>
-#include <stdio.h>
+#include "pgl_mobile_log.h"
 
 /* Define the magic struct for extensions */
 static const Pg_magic_struct pgl_mobile_magic_data = PG_MODULE_MAGIC_DATA;
@@ -318,19 +318,19 @@ static pgl_force_link_fn pgl_registered_force_link_extensions = NULL;
 /* Public registration functions - called by generated extension registries */
 void pgl_register_external_lookup(pgl_lookup_fn fn)
 {
-  fprintf(stderr, "[PGL_EXT] Registering external lookup function: %p\n", (void *)fn);
+  PGL_LOG_FMT("Registering external lookup function: %p", (void *)fn);
   pgl_registered_lookup_symbol = fn;
 }
 
 void pgl_register_external_is_builtin(pgl_is_builtin_fn fn)
 {
-  fprintf(stderr, "[PGL_EXT] Registering external is_builtin function: %p\n", (void *)fn);
+  PGL_LOG_FMT("Registering external is_builtin function: %p", (void *)fn);
   pgl_registered_is_builtin_library = fn;
 }
 
 void pgl_register_external_force_link(pgl_force_link_fn fn)
 {
-  fprintf(stderr, "[PGL_EXT] Registering external force_link function: %p\n", (void *)fn);
+  PGL_LOG_FMT("Registering external force_link function: %p", (void *)fn);
   pgl_registered_force_link_extensions = fn;
 }
 
@@ -347,14 +347,14 @@ pgl_mobile_lookup_symbol(const char *symbol)
   if (symbol == NULL)
     return NULL;
 
-  fprintf(stderr, "[PGL_EXT] pgl_mobile_lookup_symbol('%s') searching...\n", symbol);
+  PGL_LOG_FMT("pgl_mobile_lookup_symbol('%s') searching...", symbol);
 
   /* First, check built-in extensions */
   for (entry = pgl_mobile_extension_symbols; entry->name != NULL; entry++)
   {
     if (strcmp(entry->name, symbol) == 0)
     {
-      fprintf(stderr, "[PGL_EXT] Found '%s' in built-in registry at %p\n", symbol, entry->address);
+      PGL_LOG_FMT("Found '%s' in built-in registry at %p", symbol, entry->address);
       return entry->address;
     }
   }
@@ -365,7 +365,7 @@ pgl_mobile_lookup_symbol(const char *symbol)
     result = pgl_registered_lookup_symbol(symbol);
     if (result != NULL)
     {
-      fprintf(stderr, "[PGL_EXT] Found '%s' in registered external registry at %p\n", symbol, result);
+      PGL_LOG_FMT("Found '%s' in registered external registry at %p", symbol, result);
       return result;
     }
   }
@@ -376,12 +376,12 @@ pgl_mobile_lookup_symbol(const char *symbol)
     result = pgl_external_lookup_symbol(symbol);
     if (result != NULL)
     {
-      fprintf(stderr, "[PGL_EXT] Found '%s' in weak external registry at %p\n", symbol, result);
+      PGL_LOG_FMT("Found '%s' in weak external registry at %p", symbol, result);
       return result;
     }
   }
 
-  fprintf(stderr, "[PGL_EXT] Symbol '%s' NOT FOUND in any registry\n", symbol);
+  PGL_LOG_FMT("Symbol '%s' NOT FOUND in any registry", symbol);
   return NULL;
 }
 
@@ -394,29 +394,29 @@ bool pgl_mobile_is_builtin_library(const char *libname)
   if (libname == NULL)
     return false;
 
-  fprintf(stderr, "[PGL_EXT] pgl_mobile_is_builtin_library('%s')\n", libname);
+  PGL_LOG_FMT("pgl_mobile_is_builtin_library('%s')", libname);
 
   /* Check for plpgsql (always built-in) */
   if (strstr(libname, "plpgsql") != NULL)
   {
-    fprintf(stderr, "[PGL_EXT] '%s' matched plpgsql - returning true\n", libname);
+    PGL_LOG_FMT("'%s' matched plpgsql - returning true", libname);
     return true;
   }
 
 #ifdef PGL_EXT_CITEXT
   if (strstr(libname, "citext") != NULL)
   {
-    fprintf(stderr, "[PGL_EXT] '%s' matched citext (PGL_EXT_CITEXT defined) - returning true\n", libname);
+    PGL_LOG_FMT("'%s' matched citext (PGL_EXT_CITEXT defined) - returning true", libname);
     return true;
   }
 #else
-  fprintf(stderr, "[PGL_EXT] PGL_EXT_CITEXT not defined!\n");
+  PGL_LOG("PGL_EXT_CITEXT not defined!");
 #endif
 
 #ifdef PGL_EXT_HSTORE
   if (strstr(libname, "hstore") != NULL)
   {
-    fprintf(stderr, "[PGL_EXT] '%s' matched hstore - returning true\n", libname);
+    PGL_LOG_FMT("'%s' matched hstore - returning true", libname);
     return true;
   }
 #endif
@@ -424,18 +424,18 @@ bool pgl_mobile_is_builtin_library(const char *libname)
   /* Check registered external extension function (priority over weak symbols) */
   if (pgl_registered_is_builtin_library != NULL && pgl_registered_is_builtin_library(libname))
   {
-    fprintf(stderr, "[PGL_EXT] '%s' matched registered external extension - returning true\n", libname);
+    PGL_LOG_FMT("'%s' matched registered external extension - returning true", libname);
     return true;
   }
 
   /* Fallback: check weak external extension registries */
   if (pgl_external_is_builtin_library != NULL && pgl_external_is_builtin_library(libname))
   {
-    fprintf(stderr, "[PGL_EXT] '%s' matched weak external extension - returning true\n", libname);
+    PGL_LOG_FMT("'%s' matched weak external extension - returning true", libname);
     return true;
   }
 
-  fprintf(stderr, "[PGL_EXT] '%s' not a builtin library - returning false\n", libname);
+  PGL_LOG_FMT("'%s' not a builtin library - returning false", libname);
   return false;
 }
 
@@ -450,6 +450,9 @@ bool pgl_mobile_is_builtin_library(const char *libname)
  * the necessary symbol references for the linker.
  * ============================================================ */
 static volatile void *_pgl_force_link_sink;
+
+/* Track if plpgsql has been initialized (to avoid double-init) */
+static bool pgl_plpgsql_initialized = false;
 
 void pgl_mobile_force_link_extensions(void)
 {
@@ -492,7 +495,46 @@ void pgl_mobile_force_link_extensions(void)
     pgl_external_force_link_extensions();
   }
 
-  fprintf(stderr, "[PGL_EXT] pgl_mobile_force_link_extensions() called - extensions linked\n");
+  PGL_LOG("pgl_mobile_force_link_extensions() called - extensions linked");
+}
+
+/* ============================================================
+ * Extension Initialization
+ *
+ * CRITICAL: This function must be called AFTER PostgreSQL is initialized
+ * but BEFORE any PL/pgSQL functions are used. Without this, the
+ * plpgsql_HashTable will be NULL and hash_search() will crash.
+ *
+ * The issue is that on iOS devices, the lazy initialization in
+ * load_external_function() may not trigger correctly, leaving
+ * plpgsql_HashTable uninitialized.
+ * ============================================================ */
+void pgl_mobile_init_extensions(void)
+{
+  PGL_LOG("pgl_mobile_init_extensions() called - initializing extensions...");
+
+  /*
+   * Initialize plpgsql - this MUST be called before any PL/pgSQL functions
+   * can be used. It sets up the hash table that stores compiled functions.
+   *
+   * Without this, plpgsql_compile() will call hash_search(NULL, ...) and crash.
+   */
+  if (!pgl_plpgsql_initialized)
+  {
+    PGL_LOG("Initializing plpgsql via plpgsql_PG_init()...");
+    plpgsql_PG_init();
+    pgl_plpgsql_initialized = true;
+    PGL_LOG("plpgsql_PG_init() completed successfully");
+  }
+  else
+  {
+    PGL_LOG("plpgsql already initialized, skipping");
+  }
+
+  /* Initialize external extensions if registered */
+  /* Note: External extensions may need their own _PG_init calls */
+  
+  PGL_LOG("pgl_mobile_init_extensions() completed");
 }
 
 /* ============================================================
