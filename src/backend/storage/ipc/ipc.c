@@ -22,6 +22,15 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#if defined(PGL_MOBILE)
+#include <setjmp.h>
+/*
+ * pgl_boot_jmp is set by the mobile glue layer (pg_main.c) before calling
+ * PostgreSQL initialization functions. This weak default allows the core
+ * PostgreSQL to build standalone; the glue layer provides the real definition.
+ */
+volatile sigjmp_buf *pgl_boot_jmp __attribute__((weak)) = NULL;
+#endif
 
 #include "miscadmin.h"
 #ifdef PROFILE_PID_DIR
@@ -144,6 +153,23 @@ proc_exit(int code)
 		fprintf(stderr,"# proc_exit(%d) ignored at 118:%s\n",code, __FILE__);
     }
     return;
+#endif
+#if defined(PGL_MOBILE)
+	/*
+	 * Mobile platforms (iOS/Android) run PostgreSQL in-process as a library.
+	 * We cannot call exit() as it would terminate the host app.
+	 * 
+	 * pgl_boot_jmp is set by the mobile glue layer (pg_main.c) before calling
+	 * PostgreSQL initialization functions. If set, we longjmp back to the caller.
+	 * If not set (normal query execution), we just mark exit in progress and return.
+	 */
+	proc_exit_inprogress = true;
+	if (pgl_boot_jmp)
+	{
+		siglongjmp(*(sigjmp_buf *)pgl_boot_jmp, 1);
+	}
+	/* Outside bootstrap context, just return without calling exit() */
+	return;
 #endif
 	/* not safe if forked by system(), etc. */
 	if (MyProcPid != (int) getpid())

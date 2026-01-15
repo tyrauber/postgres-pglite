@@ -493,8 +493,13 @@ StaticAssertDecl(sizeof(FMGR_ABI_EXTRA) <= sizeof(((Pg_magic_struct *) 0)->abi_e
  */
 typedef const Pg_magic_struct *(*PGModuleMagicFunction) (void);
 
+/* Allow per-extension override of magic function name for static linking */
+#ifndef PG_MAGIC_FUNCTION_NAME
 #define PG_MAGIC_FUNCTION_NAME Pg_magic_func
+#endif
+#ifndef PG_MAGIC_FUNCTION_NAME_STRING
 #define PG_MAGIC_FUNCTION_NAME_STRING "Pg_magic_func"
+#endif
 
 #define PG_MODULE_MAGIC \
 extern PGDLLEXPORT const Pg_magic_struct *PG_MAGIC_FUNCTION_NAME(void); \

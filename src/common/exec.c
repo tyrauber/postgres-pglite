@@ -164,6 +164,16 @@ validate_exec(const char *path)
 int
 find_my_exec(const char *argv0, char *retpath)
 {
+#ifdef PGL_MOBILE
+	/* On mobile, we don't have a real executable - just return a fake path */
+	(void)argv0;
+	const char* prefix = getenv("PREFIX");
+	if (!prefix || !*prefix) prefix = getenv("ANDROID_DATA_DIR");
+	if (!prefix || !*prefix) prefix = getenv("IOS_RUNTIME_DIR");
+	if (!prefix || !*prefix) prefix = "/data/local/tmp/pglite";
+	snprintf(retpath, MAXPGPATH, "%s/bin/postgres", prefix);
+	return 0;
+#else
 	char	   *path;
 
 	/*
@@ -229,6 +239,7 @@ find_my_exec(const char *argv0, char *retpath)
 	log_error(errcode(ERRCODE_UNDEFINED_FILE),
 			  _("could not find a \"%s\" to execute"), argv0);
 	return -1;
+#endif /* !PGL_MOBILE */
 }
 
 
@@ -334,6 +345,17 @@ int
 find_other_exec(const char *argv0, const char *target,
 				const char *versionstr, char *retpath)
 {
+#ifdef PGL_MOBILE
+	/* On mobile, we don't execute other binaries - just return a fake path */
+	(void)argv0;
+	(void)versionstr;
+	const char* prefix = getenv("PREFIX");
+	if (!prefix || !*prefix) prefix = getenv("ANDROID_DATA_DIR");
+	if (!prefix || !*prefix) prefix = getenv("IOS_RUNTIME_DIR");
+	if (!prefix || !*prefix) prefix = "/data/local/tmp/pglite";
+	snprintf(retpath, MAXPGPATH, "%s/bin/%s", prefix, target ? target : "postgres");
+	return 0;
+#else
 	char		cmd[MAXPGPATH];
 	char	   *line;
 
@@ -364,6 +386,7 @@ find_other_exec(const char *argv0, const char *target,
 
 	pfree(line);
 	return 0;
+#endif /* !PGL_MOBILE */
 }
 
 

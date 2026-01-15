@@ -900,7 +900,38 @@ make_absolute_path(const char *path)
 void
 get_share_path(const char *my_exec_path, char *ret_path)
 {
+#if defined(PGL_MOBILE)
+	/*
+	 * Mobile platforms bundle PostgreSQL data files in the app.
+	 * Use environment variables to find them instead of deriving from exec path.
+	 * Priority: PGSYSCONFDIR > IOS_RUNTIME_DIR/share/postgresql > fallback
+	 */
+	const char *conf = getenv("PGSYSCONFDIR");
+#ifdef __APPLE__
+	const char *runtime = getenv("IOS_RUNTIME_DIR");
+#else
+	const char *runtime = getenv("ANDROID_RUNTIME_DIR");
+#endif
+	
+	/* Try PGSYSCONFDIR first */
+	if (conf && *conf)
+	{
+		strlcpy(ret_path, conf, MAXPGPATH);
+		return;
+	}
+	
+	/* Try runtime directory */
+	if (runtime && *runtime)
+	{
+		snprintf(ret_path, MAXPGPATH, "%s/share/postgresql", runtime);
+		return;
+	}
+	
+	/* Fallback for Android */
+	strlcpy(ret_path, "/data/local/tmp/pglite/share/postgresql", MAXPGPATH);
+#else
 	make_relative_path(ret_path, PGSHAREDIR, PGBINDIR, my_exec_path);
+#endif
 }
 
 /*

@@ -92,59 +92,38 @@ TimestampTz __attribute__((weak)) get_timeout_finish_time(TimeoutId id)
   return 0;
 }
 
-// Shared memory helpers stubs (satisfy link-time deps from sinval/procsignal)
-
-// Timeouts: provide safe no-op implementations used during startup/single-user
-void disable_timeout(TimeoutId id, bool keep_indicator)
+// Timeouts: The real implementations in timeout.c are used.
+// These weak stubs are only here as fallbacks if timeout.c isn't linked.
+void __attribute__((weak)) disable_timeout(TimeoutId id, bool keep_indicator)
 {
   (void)id;
   (void)keep_indicator;
 }
-void disable_all_timeouts(bool keep_indicator) { (void)keep_indicator; }
-void reschedule_timeouts(void) {}
+void __attribute__((weak)) disable_all_timeouts(bool keep_indicator) { (void)keep_indicator; }
+void __attribute__((weak)) reschedule_timeouts(void) {}
 
-// ShmemInitStruct - allocate memory from fake shared memory pool
-// This is a STRONG symbol because we need proper memory allocation for XLogCtl etc.
-// The weak version was returning a tiny static int which caused crashes when
-// PostgreSQL tried to access XLogCtl->SharedRecoveryState at offset 0x144.
-void *ShmemInitStruct(const char *name, Size size, bool *found)
-{
-  (void)name;
-  // Actually allocate the requested memory using calloc (zeroed)
-  // In single-user mode, we don't need true shared memory, just properly sized allocations
-  void *ptr = calloc(1, size);
-  if (found)
-    *found = false; // Indicate this is a new allocation, not found existing
-  return ptr;
-}
+// NOTE: ShmemInitStruct is provided by shmem.o (not stubbed here).
+// The real implementation uses ShmemSegHdr/ShmemBase which are initialized
+// by InitShmemAccess() called from CreateSharedMemoryAndSemaphores().
+// Our PGSharedMemoryCreate() provides the fake shared memory segment.
 
-// Safe size helpers (normally in libpgcommon)
-size_t __attribute__((weak)) add_size(size_t a, size_t b) { return a + b; }
-size_t __attribute__((weak)) mul_size(size_t a, size_t b) { return a * b; }
+// NOTE: add_size and mul_size are provided by shmem.o (not stubbed here).
 
 // Stats reporting stub
 void __attribute__((weak)) pgstat_report_stat(bool force) { (void)force; }
 
-// Graceful exit hook used by pg_shutdown and bootstrap
-// Intercept proc_exit during bootstrap by longjmping to pgl_boot_jmp if set
-#include <setjmp.h>
-extern volatile sigjmp_buf *pgl_boot_jmp; // defined in pg_main.c
-void proc_exit(int code)
-{
-  (void)code;
-  if (pgl_boot_jmp)
-  {
-    // Jump back to caller to avoid PANIC/exit in bootstrap context
-    siglongjmp(*(sigjmp_buf *)pgl_boot_jmp, 1);
-  }
-  // Outside bootstrap, do nothing — avoid exiting the host process.
-}
+// NOTE: proc_exit is now handled directly in PostgreSQL's ipc.c with PGL_MOBILE support.
+// The implementation uses pgl_boot_jmp (defined in pg_main.c) to longjmp back to the
+// caller instead of calling exit(), which would terminate the host app.
+// See: vendor/postgres-pglite/src/backend/storage/ipc/ipc.c
 
 // Removed stub pq_init - the real pq_init in pqcomm.c handles PGL_MOBILE properly
 // and initializes critical variables like PqRecvLength/PqRecvPointer that error
 // recovery code depends on. Socket operations in pq_init are now properly guarded
 // to skip on mobile platforms while preserving essential buffer initialization.
 
+// pg_proc_exit is a convenience wrapper used by some code
+extern void proc_exit(int code);
 void pg_proc_exit(int code) { proc_exit(code); }
 
 // WASM pipe emulation symbols expected by interactive_one.c
@@ -337,4 +316,30 @@ bool check_huge_page_size(int *newval, void **extra, GucSource source)
     return false;
   }
   return true;
+}
+
+// ============================================================================
+// Encoding function wrappers for libpq compatibility
+// ============================================================================
+// PostgreSQL builds libpgcommon_srv.a with _private suffix on encoding functions,
+// but libpq expects the non-private names. These wrappers bridge the gap.
+// This allows us to use only _srv libraries without needing _shlib duplicates.
+//
+// IMPORTANT: pg_wchar.h defines macros that rename these functions to _private.
+// We must undefine them to create the actual public symbols.
+
+#undef pg_char_to_encoding
+#undef pg_encoding_to_char
+
+extern int pg_char_to_encoding_private(const char *name);
+extern const char *pg_encoding_to_char_private(int encoding);
+
+int pg_char_to_encoding(const char *name)
+{
+  return pg_char_to_encoding_private(name);
+}
+
+const char *pg_encoding_to_char(int encoding)
+{
+  return pg_encoding_to_char_private(encoding);
 }

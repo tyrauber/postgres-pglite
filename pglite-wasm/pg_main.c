@@ -42,6 +42,12 @@ int pgl_get_log_level(void)
 }
 
 // ============================================================================
+// Global variables for IDB pipe simulation (declared extern in pgl_os.h)
+// ============================================================================
+FILE *IDB_PIPE_FP = NULL;
+int IDB_STAGE = 0;
+
+// ============================================================================
 
 #ifdef __ANDROID__
 #include <android/log.h>

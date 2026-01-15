@@ -20,7 +20,12 @@ volatile sigjmp_buf local_sigjmp_buf;
 volatile int canary_ex = 0;
 
 // track back mode used for last reply   <0 socketfiles , 0== repl , > 0 cma addr
+// On mobile, channel is defined in sdk_port-mobile.c
+#ifndef PGL_MOBILE
 volatile int channel = 0;
+#else
+extern volatile int channel;
+#endif
 
 /* TODO : prevent multiple write and write while reading ? */
 #ifdef PGL_MOBILE
@@ -63,13 +68,16 @@ get_channel() {
     return channel;
 }
 
-
+// On mobile, interactive_read and use_wire are provided by sdk_port-mobile.c
+// with mobile-specific implementations using pgl_mobile_cma_* variables.
+#ifndef PGL_MOBILE
 __attribute__((export_name("interactive_read")))
 int
 interactive_read() {
     /* should cma_rsize should be reset here ? */
     return cma_wsize;
 }
+#endif
 
 
 static void pg_prompt() {
@@ -283,6 +291,8 @@ interactive_write(int size) {
 #endif
 }
 
+// On mobile, use_wire is provided by sdk_port-mobile.c
+#ifndef PGL_MOBILE
 __attribute__((export_name("use_wire")))
 void
 use_wire(int state) {
@@ -303,6 +313,7 @@ use_wire(int state) {
         is_repl = true;
     }
 }
+#endif
 
 __attribute__((export_name("clear_error")))
 void

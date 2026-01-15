@@ -74,8 +74,9 @@ int pgl_get_log_level(void);
 #define PGL_DEBUG(...) // no-op
 #endif
 
-FILE *IDB_PIPE_FP = NULL;
-int IDB_STAGE = 0;
+// These are defined in pg_main.c - declare extern here
+extern FILE *IDB_PIPE_FP;
+extern int IDB_STAGE;
 
 /*
  * and now popen will return predefined slot from a file list
@@ -83,12 +84,12 @@ int IDB_STAGE = 0;
  */
 
 #ifdef PGL_MOBILE
-static const char *get_env_or(const char *k, const char *d)
+static inline const char *get_env_or(const char *k, const char *d)
 {
   const char *v = getenv(k);
   return (v && *v) ? v : d;
 }
-static void build_pipe_path(int stage, char *out, size_t outsz)
+static inline void build_pipe_path(int stage, char *out, size_t outsz)
 {
   const char *runtime = getenv("ANDROID_RUNTIME_DIR");
 #ifdef __APPLE__
@@ -100,10 +101,10 @@ static void build_pipe_path(int stage, char *out, size_t outsz)
   snprintf(out, outsz, "%s/%s", base, fname);
 }
 // Expose for readers (pg_main.c) to reopen the same files we wrote via pgl_popen
-void pgl_get_pipe_path(int stage, char *out, size_t outsz) { build_pipe_path(stage, out, outsz); }
+static inline void pgl_get_pipe_path(int stage, char *out, size_t outsz) { build_pipe_path(stage, out, outsz); }
 #endif
 
-FILE *pgl_popen(const char *command, const char *type)
+static inline FILE *pgl_popen(const char *command, const char *type)
 {
   (void)type;
   if (IDB_STAGE > 1)
@@ -146,7 +147,7 @@ FILE *pgl_popen(const char *command, const char *type)
 
 #define popen(command, mode) pgl_popen(command, mode)
 
-int pgl_pclose(FILE *stream)
+static inline int pgl_pclose(FILE *stream)
 {
   (void)stream;
   if (IDB_STAGE == 1)
