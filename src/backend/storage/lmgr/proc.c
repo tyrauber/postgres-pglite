@@ -307,8 +307,16 @@ InitProcess(void)
 		elog(PANIC, "proc header uninitialized");
 
 	if (MyProc != NULL)
-#if defined(__wasi__) || defined(__EMSCRIPTEN__)
-		elog(WARNING, "# 309: you already exist");
+#if defined(__wasi__) || defined(__EMSCRIPTEN__) || defined(PGL_MOBILE)
+		/*
+		 * On WASM and mobile platforms, we may call InitProcess multiple times
+		 * in the same process (e.g., when the test harness or app calls
+		 * pgl_backend() multiple times). Just warn and return early.
+		 */
+		{
+			elog(WARNING, "# 309: you already exist (MyProc=%p), skipping re-init", MyProc);
+			return;
+		}
 #else
 		elog(ERROR, "# 309: you already exist");
 #endif

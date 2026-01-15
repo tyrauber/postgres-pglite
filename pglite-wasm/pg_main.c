@@ -200,6 +200,18 @@ volatile int pgl_idb_status;
 // TODO: log sync start failures and ask to repair/clean up db.
 volatile int async_restart = 1;
 
+#ifdef PGL_MOBILE
+/*
+ * Track whether PostgreSQL backend has been fully initialized in this process.
+ * This is separate from async_restart (which tracks if DB files exist).
+ * 
+ * On mobile, we may call pgl_backend() multiple times in the same process
+ * (e.g., test harness, or app re-initializing after error). We need to know
+ * if the backend is already running to avoid re-initialization issues.
+ */
+static volatile bool pgl_backend_initialized = false;
+#endif
+
 #define IDB_OK 0b11111110
 #define IDB_FAILED 0b0001
 #define IDB_CALLED 0b0010
@@ -211,8 +223,43 @@ volatile int async_restart = 1;
 
 #include <setjmp.h>
 extern bool IsPostmasterEnvironment;
-/* Global hook for intercepting proc_exit during bootstrap */
+
+/*
+ * Error handling for mobile platforms (iOS/Android).
+ *
+ * PostgreSQL's proc_exit() normally calls exit() which would terminate the host app.
+ * On mobile, we intercept proc_exit() via pgl_boot_jmp to longjmp back to a safe point.
+ *
+ * CRITICAL: We use STATIC jump buffers, not stack-local ones. Stack-local buffers
+ * become invalid when the function returns, causing crashes if proc_exit() is called
+ * later (e.g., during query execution when an error triggers proc_exit).
+ *
+ * There are three contexts where we need to catch proc_exit:
+ * 1. Bootstrap mode (BootstrapModeMain) - during initdb
+ * 2. Shared memory initialization - when PgStartTime == 0
+ * 3. Backend initialization - AsyncPostgresSingleUserMain
+ *
+ * During normal query execution, pgl_boot_jmp should be NULL. PostgreSQL's normal
+ * error handling (PG_exception_stack / sigsetjmp in pgl_sjlj.c) handles query errors.
+ * Only fatal errors that call proc_exit() need the pgl_boot_jmp mechanism.
+ */
+
+/* Static jump buffers - these remain valid for the lifetime of the process */
+static sigjmp_buf pgl_boot_jmp_buf;      /* For BootstrapModeMain */
+static sigjmp_buf pgl_shmem_jmp_buf;     /* For shared memory init */
+static sigjmp_buf pgl_backend_jmp_buf;   /* For AsyncPostgresSingleUserMain */
+
+/* Global pointer to the currently active jump buffer (or NULL if none) */
 volatile sigjmp_buf *pgl_boot_jmp = NULL;
+
+/* Track which context we're in for debugging */
+typedef enum {
+    PGL_JMP_NONE = 0,
+    PGL_JMP_BOOT,
+    PGL_JMP_SHMEM,
+    PGL_JMP_BACKEND
+} PglJmpContext;
+static volatile PglJmpContext pgl_jmp_context = PGL_JMP_NONE;
 
 #define help(name)
 #ifdef __ANDROID__
@@ -595,6 +642,19 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
 
     PGL_LOG_ERROR("%s", "[pgl_backend] *** ENTRY: pgl_backend function called ***");
     PGL_LOG_ERROR("%s", "[pgl_backend] *** This confirms we reached pgl_backend after pgl_initdb ***");
+
+    /*
+     * Check if backend is already initialized in this process.
+     * On mobile, pgl_backend() may be called multiple times (e.g., test harness,
+     * or app re-initializing). If already initialized, just return - the backend
+     * is ready to process queries via interactive_one().
+     */
+    if (pgl_backend_initialized)
+    {
+        PGL_LOG_INFO("[pgl_backend] Backend already initialized, skipping re-init");
+        fprintf(stderr, "[pgl_backend] Backend already initialized in this process, skipping\n");
+        return;
+    }
 #endif
     fprintf(stderr, "[pgl_backend] *** ENTRY: pgl_backend function called ***\n");
 #ifdef __ANDROID__
@@ -758,12 +818,14 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
             fprintf(stderr, "[pgl_backend] Shared memory not initialized after RePostgresSingleUserMain, initializing...\n");
 
             /* Set up pgl_boot_jmp to catch proc_exit during initialization.
-             * This is critical because InitProcess may fail if shared memory is stale. */
-            sigjmp_buf __shmem_init_jmp;
-            pgl_boot_jmp = &__shmem_init_jmp;
-            if (sigsetjmp(__shmem_init_jmp, 1) != 0)
+             * This is critical because InitProcess may fail if shared memory is stale.
+             * NOTE: We use a STATIC jump buffer to avoid dangling pointer issues. */
+            pgl_boot_jmp = &pgl_shmem_jmp_buf;
+            pgl_jmp_context = PGL_JMP_SHMEM;
+            if (sigsetjmp(pgl_shmem_jmp_buf, 1) != 0)
             {
                 pgl_boot_jmp = NULL;
+                pgl_jmp_context = PGL_JMP_NONE;
                 PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during shmem init, returning");
                 fprintf(stderr, "[pgl_backend] proc_exit intercepted during shmem init, returning\n");
                 return; /* Return from pgl_backend - caller should handle the error */
@@ -802,7 +864,9 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
             /* Early initialization */
             BaseInit();
 
-            pgl_boot_jmp = NULL; /* Clear after successful init */
+            /* Clear jump buffer after successful init */
+            pgl_boot_jmp = NULL;
+            pgl_jmp_context = PGL_JMP_NONE;
             PGL_LOG_INFO("[pgl_backend] Shared memory initialization complete");
             fprintf(stderr, "[pgl_backend] Shared memory initialization complete\n");
         }
@@ -877,13 +941,15 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
     
     /* Set up pgl_boot_jmp to catch proc_exit during backend initialization.
      * This is critical because InitProcess may fail if shared memory is stale
-     * (e.g., after app restart), and proc_exit would otherwise crash. */
-    sigjmp_buf __backend_exit_jmp;
-    pgl_boot_jmp = &__backend_exit_jmp;
-    fprintf(stderr, "[pgl_backend] *** pgl_boot_jmp set to %p ***\n", (void*)pgl_boot_jmp);
-    if (sigsetjmp(__backend_exit_jmp, 1) != 0)
+     * (e.g., after app restart), and proc_exit would otherwise crash.
+     * NOTE: We use a STATIC jump buffer to avoid dangling pointer issues. */
+    pgl_boot_jmp = &pgl_backend_jmp_buf;
+    pgl_jmp_context = PGL_JMP_BACKEND;
+    fprintf(stderr, "[pgl_backend] *** pgl_boot_jmp set to %p (static buffer, context=BACKEND) ***\n", (void*)pgl_boot_jmp);
+    if (sigsetjmp(pgl_backend_jmp_buf, 1) != 0)
     {
         pgl_boot_jmp = NULL;
+        pgl_jmp_context = PGL_JMP_NONE;
         PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during backend init, returning");
         fprintf(stderr, "[pgl_backend] proc_exit intercepted during backend init, returning\n");
         return; /* Return from pgl_backend - caller should handle the error */
@@ -894,7 +960,10 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
     AsyncPostgresSingleUserMain(single_argc_save, single_argv, PGUSER, async_restart);
 
 #ifdef PGL_MOBILE
-    pgl_boot_jmp = NULL; /* Clear after successful init */
+    /* Clear jump buffer after successful init - CRITICAL for query execution safety */
+    pgl_boot_jmp = NULL;
+    pgl_jmp_context = PGL_JMP_NONE;
+    fprintf(stderr, "[pgl_backend] *** pgl_boot_jmp cleared after AsyncPostgresSingleUserMain ***\n");
 #endif
 
 backend_started:;
@@ -952,6 +1021,10 @@ backend_started:;
     PGL_LOG_INFO("[pgl_mobile] Extension initialization complete");
 
     PGL_LOG_INFO("[pgl_mobile] Mobile backend state initialization complete");
+
+    /* Mark backend as initialized - subsequent calls to pgl_backend() will skip re-init */
+    pgl_backend_initialized = true;
+    PGL_LOG_INFO("[pgl_backend] Backend initialization complete, pgl_backend_initialized=true");
 #endif
 
     if (TransamVariables && TransamVariables->nextOid < ((Oid)FirstNormalObjectId))
@@ -1273,12 +1346,14 @@ int pgl_initdb()
             {
                 PGL_LOG_ERROR("[pgl_main] Failed to open stderr log %s: errno=%d", errlog, errno);
             }
-            /* Intercept proc_exit during bootstrap to avoid PANIC in child context */
-            sigjmp_buf __boot_exit_jmp;
-            pgl_boot_jmp = &__boot_exit_jmp;
-            if (sigsetjmp(__boot_exit_jmp, 1) != 0)
+            /* Intercept proc_exit during bootstrap to avoid PANIC in child context.
+             * NOTE: We use a STATIC jump buffer to avoid dangling pointer issues. */
+            pgl_boot_jmp = &pgl_boot_jmp_buf;
+            pgl_jmp_context = PGL_JMP_BOOT;
+            if (sigsetjmp(pgl_boot_jmp_buf, 1) != 0)
             {
                 pgl_boot_jmp = NULL;
+                pgl_jmp_context = PGL_JMP_NONE;
                 fprintf(stderr, "[pgl_boot] proc_exit intercepted during bootstrap, continuing\n");
                 PGL_LOG_INFO("%s", "[pgl_boot] proc_exit intercepted during bootstrap");
             }
@@ -1289,6 +1364,7 @@ int pgl_initdb()
                 PGL_LOG_INFO("[pgl_main] BootstrapModeMain completed successfully");
             }
             pgl_boot_jmp = NULL;
+            pgl_jmp_context = PGL_JMP_NONE;
             fprintf(stderr, "[pgl_main] BootstrapModeMain returned normally\n");
             PGL_LOG_ERROR("%s", "[pgl_main] *** BootstrapModeMain phase completed ***");
         }

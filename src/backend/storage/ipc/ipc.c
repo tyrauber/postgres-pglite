@@ -162,13 +162,23 @@ proc_exit(int code)
 	 * pgl_boot_jmp is set by the mobile glue layer (pg_main.c) before calling
 	 * PostgreSQL initialization functions. If set, we longjmp back to the caller.
 	 * If not set (normal query execution), we just mark exit in progress and return.
+	 *
+	 * IMPORTANT: pgl_boot_jmp points to a STATIC buffer in pg_main.c, not a
+	 * stack-local variable. This ensures the jump buffer is always valid when set.
 	 */
 	proc_exit_inprogress = true;
 	if (pgl_boot_jmp)
 	{
+		/* Jump back to initialization code - this is expected during bootstrap/init */
 		siglongjmp(*(sigjmp_buf *)pgl_boot_jmp, 1);
 	}
-	/* Outside bootstrap context, just return without calling exit() */
+	/*
+	 * Outside bootstrap context (pgl_boot_jmp == NULL), we're in normal query
+	 * execution or process cleanup. PostgreSQL's error handling (PG_exception_stack)
+	 * should have caught any recoverable errors. If we reach proc_exit() here, it's
+	 * a fatal error that can't be recovered. We mark exit in progress and return -
+	 * the caller will need to handle this gracefully.
+	 */
 	return;
 #endif
 	/* not safe if forked by system(), etc. */

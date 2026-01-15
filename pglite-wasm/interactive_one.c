@@ -477,6 +477,25 @@ interactive_one() {
 	StringInfoData *inBuf;
 
 #ifdef PGL_MOBILE
+    /*
+     * CRITICAL SAFETY CHECK: Ensure pgl_boot_jmp is NULL before query execution.
+     *
+     * pgl_boot_jmp is used during initialization to catch proc_exit() calls.
+     * During normal query execution, it MUST be NULL. If proc_exit() is called
+     * during a query (e.g., due to a fatal error), it should just return without
+     * calling exit() - the query error handling (PG_exception_stack) handles errors.
+     *
+     * If pgl_boot_jmp is not NULL here, it means initialization didn't clear it
+     * properly, which would cause crashes if proc_exit() is called during queries.
+     */
+    extern volatile sigjmp_buf *pgl_boot_jmp;
+    if (pgl_boot_jmp != NULL)
+    {
+        PGL_LOG_ERROR("interactive_one: WARNING - pgl_boot_jmp is not NULL (%p), clearing for safety", (void*)pgl_boot_jmp);
+        fprintf(stderr, "[interactive_one] WARNING: pgl_boot_jmp was %p, clearing to prevent crash\n", (void*)pgl_boot_jmp);
+        pgl_boot_jmp = NULL;
+    }
+
     PGL_LOG_INFO("interactive_one: ENTRY - backend is running and ready to process messages");
     PGL_LOG_INFO("interactive_one: MessageContext=%p", (void*)MessageContext);
 #endif
