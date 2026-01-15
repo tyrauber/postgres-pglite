@@ -29,6 +29,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef PGL_MOBILE
+#include <zlib.h>
+#endif
+
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
@@ -3507,11 +3511,210 @@ ExecAlterExtensionContentsRecurse(AlterExtensionContentsStmt *stmt,
 	}
 }
 
+#ifdef PGL_MOBILE
+/*
+ * Get the cache directory for decompressed files.
+ * On mobile, we cache decompressed files to avoid repeated decompression.
+ */
+static const char *
+pgl_get_cache_dir(void)
+{
+	static char cache_dir[MAXPGPATH] = {0};
+	
+	if (cache_dir[0] == '\0')
+	{
+		/* Use the data directory's parent + /cache */
+		const char *data_dir = DataDir;
+		if (data_dir != NULL)
+		{
+			snprintf(cache_dir, sizeof(cache_dir), "%s/../pglite_cache", data_dir);
+			/* Create the cache directory if it doesn't exist */
+			mkdir(cache_dir, 0755);
+		}
+		else
+		{
+			/* Fallback to /tmp */
+			snprintf(cache_dir, sizeof(cache_dir), "/tmp/pglite_cache");
+			mkdir(cache_dir, 0755);
+		}
+	}
+	return cache_dir;
+}
+
+/*
+ * Extract just the filename from a path.
+ */
+static const char *
+pgl_basename(const char *path)
+{
+	const char *base = strrchr(path, '/');
+	return base ? base + 1 : path;
+}
+
+/*
+ * Decompress a gzipped file and write to cache.
+ * Returns true on success, false on failure.
+ */
+static bool
+pgl_decompress_to_cache(const char *gz_path, const char *cache_path)
+{
+	gzFile gzfile;
+	FILE *outfile;
+	char buf[65536];  /* 64KB buffer */
+	int bytes_read;
+	
+	gzfile = gzopen(gz_path, "rb");
+	if (gzfile == NULL)
+	{
+		elog(WARNING, "pgl_decompress_to_cache: could not open %s", gz_path);
+		return false;
+	}
+	
+	outfile = fopen(cache_path, "wb");
+	if (outfile == NULL)
+	{
+		gzclose(gzfile);
+		/* Use %m for errno - PostgreSQL's portable way to format errno */
+		elog(WARNING, "pgl_decompress_to_cache: could not create %s: %m", cache_path);
+		return false;
+	}
+	
+	while ((bytes_read = gzread(gzfile, buf, sizeof(buf))) > 0)
+	{
+		if (fwrite(buf, 1, bytes_read, outfile) != (size_t)bytes_read)
+		{
+			elog(WARNING, "pgl_decompress_to_cache: write error to %s", cache_path);
+			fclose(outfile);
+			gzclose(gzfile);
+			unlink(cache_path);  /* Clean up partial file */
+			return false;
+		}
+	}
+	
+	if (bytes_read < 0)
+	{
+		int errnum;
+		const char *errmsg = gzerror(gzfile, &errnum);
+		elog(WARNING, "pgl_decompress_to_cache: gzip read error: %s", errmsg);
+		fclose(outfile);
+		gzclose(gzfile);
+		unlink(cache_path);
+		return false;
+	}
+	
+	fclose(outfile);
+	gzclose(gzfile);
+	
+	elog(DEBUG1, "pgl_decompress_to_cache: decompressed %s to %s", gz_path, cache_path);
+	return true;
+}
+
+/*
+ * Read a gzipped file into memory, using cache if available.
+ * 
+ * Strategy:
+ * 1. Check if uncompressed version exists in cache -> read directly (fast)
+ * 2. If not, decompress to cache, then read from cache
+ * 
+ * This ensures subsequent reads are fast (no decompression needed).
+ */
+static char *
+read_gzipped_file_cached(const char *gz_filename, int *length)
+{
+	char cache_path[MAXPGPATH];
+	const char *cache_dir;
+	const char *base_name;
+	struct stat fst;
+	char *buf;
+	FILE *file;
+	size_t bytes_to_read;
+	
+	/* Build cache path: cache_dir/filename (without .gz) */
+	cache_dir = pgl_get_cache_dir();
+	base_name = pgl_basename(gz_filename);
+	
+	/* Remove .gz extension for cache filename */
+	{
+		size_t len = strlen(base_name);
+		if (len > 3 && strcmp(base_name + len - 3, ".gz") == 0)
+		{
+			char name_without_gz[MAXPGPATH];
+			strncpy(name_without_gz, base_name, len - 3);
+			name_without_gz[len - 3] = '\0';
+			snprintf(cache_path, sizeof(cache_path), "%s/%s", cache_dir, name_without_gz);
+		}
+		else
+		{
+			snprintf(cache_path, sizeof(cache_path), "%s/%s", cache_dir, base_name);
+		}
+	}
+	
+	/* Check if cached version exists and is valid */
+	if (stat(cache_path, &fst) == 0 && fst.st_size > 0)
+	{
+		/* Cache hit - read from cache */
+		elog(DEBUG1, "read_gzipped_file_cached: cache hit for %s", cache_path);
+	}
+	else
+	{
+		/* Cache miss - decompress to cache */
+		elog(DEBUG1, "read_gzipped_file_cached: cache miss, decompressing %s", gz_filename);
+		
+		if (!pgl_decompress_to_cache(gz_filename, cache_path))
+		{
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not decompress file \"%s\"", gz_filename)));
+		}
+		
+		/* Re-stat the cache file */
+		if (stat(cache_path, &fst) < 0)
+		{
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not stat decompressed file \"%s\": %m", cache_path)));
+		}
+	}
+	
+	/* Now read from cache (same as original read_whole_file) */
+	if (fst.st_size > (MaxAllocSize - 1))
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("file \"%s\" is too large", cache_path)));
+	bytes_to_read = (size_t) fst.st_size;
+	
+	file = fopen(cache_path, "rb");
+	if (file == NULL)
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not open file \"%s\" for reading: %m", cache_path)));
+	
+	buf = (char *) palloc(bytes_to_read + 1);
+	*length = fread(buf, 1, bytes_to_read, file);
+	
+	if (ferror(file))
+	{
+		fclose(file);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not read file \"%s\": %m", cache_path)));
+	}
+	
+	fclose(file);
+	buf[*length] = '\0';
+	return buf;
+}
+#endif /* PGL_MOBILE */
+
 /*
  * Read the whole of file into memory.
  *
  * The file contents are returned as a single palloc'd chunk. For convenience
  * of the callers, an extra \0 byte is added to the end.
+ *
+ * On mobile (PGL_MOBILE), this function also supports reading gzipped files:
+ * - If filename ends with .gz, decompress it (with caching)
+ * - If filename doesn't exist but filename.gz does, use the gzipped version
  */
 static char *
 read_whole_file(const char *filename, int *length)
@@ -3520,6 +3723,32 @@ read_whole_file(const char *filename, int *length)
 	FILE	   *file;
 	size_t		bytes_to_read;
 	struct stat fst;
+
+#ifdef PGL_MOBILE
+	/* Check if this is a .gz file */
+	size_t filename_len = strlen(filename);
+	if (filename_len > 3 && strcmp(filename + filename_len - 3, ".gz") == 0)
+	{
+		/* Direct .gz file - decompress with caching */
+		return read_gzipped_file_cached(filename, length);
+	}
+	
+	/* Check if file exists; if not, try .gz version */
+	if (stat(filename, &fst) < 0)
+	{
+		char gz_filename[MAXPGPATH];
+		snprintf(gz_filename, sizeof(gz_filename), "%s.gz", filename);
+		
+		if (stat(gz_filename, &fst) == 0)
+		{
+			/* .gz version exists - use it */
+			elog(DEBUG1, "read_whole_file: using gzipped version %s", gz_filename);
+			return read_gzipped_file_cached(gz_filename, length);
+		}
+		
+		/* Neither exists - fall through to original error handling */
+	}
+#endif
 
 	if (stat(filename, &fst) < 0)
 		ereport(ERROR,

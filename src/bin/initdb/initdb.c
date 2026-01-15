@@ -58,6 +58,10 @@
 #endif
 #include <unistd.h>
 #include <signal.h>
+
+#ifdef PGL_MOBILE
+#include <zlib.h>
+#endif
 #include <time.h>
 
 #ifdef HAVE_SHM_OPEN
@@ -678,10 +682,140 @@ guc_value_requires_quotes(const char *guc_value)
 	return true; /* all else must be quoted */
 }
 
+#ifdef PGL_MOBILE
+/*
+ * Get the cache directory for decompressed files (initdb version).
+ */
+static const char *
+pgl_initdb_get_cache_dir(void)
+{
+	static char cache_dir[MAXPGPATH] = {0};
+	
+	if (cache_dir[0] == '\0')
+	{
+		/* Use pg_data's parent + /pglite_cache */
+		if (pg_data != NULL && pg_data[0] != '\0')
+		{
+			snprintf(cache_dir, sizeof(cache_dir), "%s/../pglite_cache", pg_data);
+		}
+		else
+		{
+			/* Fallback to /tmp */
+			snprintf(cache_dir, sizeof(cache_dir), "/tmp/pglite_cache");
+		}
+		mkdir(cache_dir, 0755);
+	}
+	return cache_dir;
+}
+
+/*
+ * Extract just the filename from a path.
+ */
+static const char *
+pgl_initdb_basename(const char *path)
+{
+	const char *base = strrchr(path, '/');
+	return base ? base + 1 : path;
+}
+
+/*
+ * Decompress a gzipped file to cache and return the cache path.
+ * Returns the cache path on success, NULL on failure.
+ */
+static char *
+pgl_initdb_decompress_to_cache(const char *gz_path)
+{
+	static char cache_path[MAXPGPATH];
+	const char *cache_dir;
+	const char *base_name;
+	gzFile gzfile;
+	FILE *outfile;
+	char buf[65536];
+	int bytes_read;
+	size_t len;
+	struct stat fst;
+	
+	cache_dir = pgl_initdb_get_cache_dir();
+	base_name = pgl_initdb_basename(gz_path);
+	
+	/* Remove .gz extension for cache filename */
+	len = strlen(base_name);
+	if (len > 3 && strcmp(base_name + len - 3, ".gz") == 0)
+	{
+		char name_without_gz[MAXPGPATH];
+		strncpy(name_without_gz, base_name, len - 3);
+		name_without_gz[len - 3] = '\0';
+		snprintf(cache_path, sizeof(cache_path), "%s/%s", cache_dir, name_without_gz);
+	}
+	else
+	{
+		snprintf(cache_path, sizeof(cache_path), "%s/%s", cache_dir, base_name);
+	}
+	
+	/* Check if already cached */
+	if (stat(cache_path, &fst) == 0 && fst.st_size > 0)
+	{
+		pg_log_info("using cached file: %s", cache_path);
+		return cache_path;
+	}
+	
+	/* Decompress to cache */
+	pg_log_info("decompressing %s to cache...", gz_path);
+	
+	gzfile = gzopen(gz_path, "rb");
+	if (gzfile == NULL)
+	{
+		pg_log_error("could not open gzipped file \"%s\"", gz_path);
+		return NULL;
+	}
+	
+	outfile = fopen(cache_path, "wb");
+	if (outfile == NULL)
+	{
+		gzclose(gzfile);
+		pg_log_error("could not create cache file \"%s\": %m", cache_path);
+		return NULL;
+	}
+	
+	while ((bytes_read = gzread(gzfile, buf, sizeof(buf))) > 0)
+	{
+		if (fwrite(buf, 1, bytes_read, outfile) != (size_t)bytes_read)
+		{
+			pg_log_error("could not write to cache file \"%s\": %m", cache_path);
+			fclose(outfile);
+			gzclose(gzfile);
+			unlink(cache_path);
+			return NULL;
+		}
+	}
+	
+	if (bytes_read < 0)
+	{
+		int errnum;
+		const char *errmsg = gzerror(gzfile, &errnum);
+		pg_log_error("gzip read error: %s", errmsg);
+		fclose(outfile);
+		gzclose(gzfile);
+		unlink(cache_path);
+		return NULL;
+	}
+	
+	fclose(outfile);
+	gzclose(gzfile);
+	
+	pg_log_info("decompressed to: %s", cache_path);
+	return cache_path;
+}
+#endif /* PGL_MOBILE */
+
 /*
  * get the lines from a text file
  *
  * The result is a malloc'd array of individually malloc'd strings.
+ *
+ * On mobile (PGL_MOBILE), this function also supports reading gzipped files:
+ * - If path ends with .gz, decompress it to cache first
+ * - If path doesn't exist but path.gz does, use the gzipped version
  */
 static char **
 readfile(const char *path)
@@ -691,9 +825,37 @@ readfile(const char *path)
 	StringInfoData line;
 	int maxlines;
 	int n;
+	const char *actual_path = path;
 
-	if ((infile = fopen(path, "r")) == NULL)
-		pg_fatal("could not open file \"%s\" for reading: %m", path);
+#ifdef PGL_MOBILE
+	struct stat fst;
+	size_t path_len = strlen(path);
+	
+	/* Check if this is a .gz file */
+	if (path_len > 3 && strcmp(path + path_len - 3, ".gz") == 0)
+	{
+		actual_path = pgl_initdb_decompress_to_cache(path);
+		if (actual_path == NULL)
+			pg_fatal("could not decompress file \"%s\"", path);
+	}
+	/* Check if file exists; if not, try .gz version */
+	else if (stat(path, &fst) < 0)
+	{
+		char gz_path[MAXPGPATH];
+		snprintf(gz_path, sizeof(gz_path), "%s.gz", path);
+		
+		if (stat(gz_path, &fst) == 0)
+		{
+			pg_log_info("using gzipped version: %s", gz_path);
+			actual_path = pgl_initdb_decompress_to_cache(gz_path);
+			if (actual_path == NULL)
+				pg_fatal("could not decompress file \"%s\"", gz_path);
+		}
+	}
+#endif
+
+	if ((infile = fopen(actual_path, "r")) == NULL)
+		pg_fatal("could not open file \"%s\" for reading: %m", actual_path);
 
 	initStringInfo(&line);
 
