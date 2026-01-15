@@ -1164,6 +1164,9 @@ set_input(char **dest, const char *filename)
 
 /*
  * check that given input file exists
+ *
+ * On mobile (PGL_MOBILE), also checks for .gz version of the file,
+ * since runtime files may be gzip-compressed to reduce bundle size.
  */
 static void
 check_input(char *path)
@@ -1172,6 +1175,21 @@ check_input(char *path)
 
 	if (stat(path, &statbuf) != 0)
 	{
+#ifdef PGL_MOBILE
+		/* On mobile, check if .gz version exists */
+		if (errno == ENOENT)
+		{
+			char gz_path[MAXPGPATH];
+			snprintf(gz_path, sizeof(gz_path), "%s.gz", path);
+			
+			if (stat(gz_path, &statbuf) == 0 && S_ISREG(statbuf.st_mode))
+			{
+				/* .gz version exists, that's fine - readfile() will decompress it */
+				pg_log_info("using gzipped version: %s", gz_path);
+				return;
+			}
+		}
+#endif
 		if (errno == ENOENT)
 		{
 			pg_log_error("file \"%s\" does not exist", path);
