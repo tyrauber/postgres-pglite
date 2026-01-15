@@ -904,7 +904,19 @@ get_share_path(const char *my_exec_path, char *ret_path)
 	/*
 	 * Mobile platforms bundle PostgreSQL data files in the app.
 	 * Use environment variables to find them instead of deriving from exec path.
-	 * Priority: PGSYSCONFDIR > IOS_RUNTIME_DIR/share/postgresql > fallback
+	 * 
+	 * iOS bundle structure:
+	 *   share/postgresql/  <- postgres.bki, *.sql, etc.
+	 *   share/timezonesets/ <- timezone abbreviation files
+	 *   share/timezone/     <- timezone data
+	 *   share/extension/    <- extension files
+	 *
+	 * PGSYSCONFDIR should point to the PARENT of share/ (e.g., /path/to/runtime)
+	 * This function returns PGSYSCONFDIR/share/postgresql for initdb (postgres.bki)
+	 * BUT tzparser.c appends /timezonesets/ expecting share_path to be share/
+	 * 
+	 * To handle both cases, we return PGSYSCONFDIR/share which contains both
+	 * postgresql/ and timezonesets/ as siblings.
 	 */
 	const char *conf = getenv("PGSYSCONFDIR");
 #ifdef __APPLE__
@@ -913,22 +925,22 @@ get_share_path(const char *my_exec_path, char *ret_path)
 	const char *runtime = getenv("ANDROID_RUNTIME_DIR");
 #endif
 	
-	/* Try PGSYSCONFDIR first */
+	/* Try PGSYSCONFDIR first - append /share to get to the share directory */
 	if (conf && *conf)
 	{
-		strlcpy(ret_path, conf, MAXPGPATH);
+		snprintf(ret_path, MAXPGPATH, "%s/share", conf);
 		return;
 	}
 	
-	/* Try runtime directory */
+	/* Try runtime directory - append /share */
 	if (runtime && *runtime)
 	{
-		snprintf(ret_path, MAXPGPATH, "%s/share/postgresql", runtime);
+		snprintf(ret_path, MAXPGPATH, "%s/share", runtime);
 		return;
 	}
 	
 	/* Fallback for Android */
-	strlcpy(ret_path, "/data/local/tmp/pglite/share/postgresql", MAXPGPATH);
+	strlcpy(ret_path, "/data/local/tmp/pglite/share", MAXPGPATH);
 #else
 	make_relative_path(ret_path, PGSHAREDIR, PGBINDIR, my_exec_path);
 #endif

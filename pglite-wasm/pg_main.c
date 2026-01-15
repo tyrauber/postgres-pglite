@@ -757,6 +757,18 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
             PGL_LOG_INFO("[pgl_backend] Shared memory not initialized, initializing now...");
             fprintf(stderr, "[pgl_backend] Shared memory not initialized after RePostgresSingleUserMain, initializing...\n");
 
+            /* Set up pgl_boot_jmp to catch proc_exit during initialization.
+             * This is critical because InitProcess may fail if shared memory is stale. */
+            sigjmp_buf __shmem_init_jmp;
+            pgl_boot_jmp = &__shmem_init_jmp;
+            if (sigsetjmp(__shmem_init_jmp, 1) != 0)
+            {
+                pgl_boot_jmp = NULL;
+                PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during shmem init, returning");
+                fprintf(stderr, "[pgl_backend] proc_exit intercepted during shmem init, returning\n");
+                return; /* Return from pgl_backend - caller should handle the error */
+            }
+
             /* Read control file */
             LocalProcessControlFile(false);
 
@@ -790,6 +802,7 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
             /* Early initialization */
             BaseInit();
 
+            pgl_boot_jmp = NULL; /* Clear after successful init */
             PGL_LOG_INFO("[pgl_backend] Shared memory initialization complete");
             fprintf(stderr, "[pgl_backend] Shared memory initialization complete\n");
         }
@@ -861,9 +874,28 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
 #ifdef PGL_MOBILE
     /* Single-user mode runs in REPL mode by default (is_wire=false, is_repl=true) */
     PGL_LOG_INFO("[pgl_backend] Using default REPL mode for AsyncPostgresSingleUserMain");
+    
+    /* Set up pgl_boot_jmp to catch proc_exit during backend initialization.
+     * This is critical because InitProcess may fail if shared memory is stale
+     * (e.g., after app restart), and proc_exit would otherwise crash. */
+    sigjmp_buf __backend_exit_jmp;
+    pgl_boot_jmp = &__backend_exit_jmp;
+    fprintf(stderr, "[pgl_backend] *** pgl_boot_jmp set to %p ***\n", (void*)pgl_boot_jmp);
+    if (sigsetjmp(__backend_exit_jmp, 1) != 0)
+    {
+        pgl_boot_jmp = NULL;
+        PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during backend init, returning");
+        fprintf(stderr, "[pgl_backend] proc_exit intercepted during backend init, returning\n");
+        return; /* Return from pgl_backend - caller should handle the error */
+    }
+    fprintf(stderr, "[pgl_backend] *** sigsetjmp returned 0, proceeding to AsyncPostgresSingleUserMain ***\n");
 #endif
 
     AsyncPostgresSingleUserMain(single_argc_save, single_argv, PGUSER, async_restart);
+
+#ifdef PGL_MOBILE
+    pgl_boot_jmp = NULL; /* Clear after successful init */
+#endif
 
 backend_started:;
     PGL_LOG_INFO("[pgl_backend] Reached backend_started label");
