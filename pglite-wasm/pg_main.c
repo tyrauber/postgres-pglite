@@ -767,6 +767,11 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
             // Disable startup progress timers to avoid timeout machinery during single-user replay
             single_argv[single_argc++] = "-c";
             single_argv[single_argc++] = "log_startup_progress_interval=0";
+            // CRITICAL: Enable data_sync_retry to prevent PANIC on close() failures during startup.
+            // On mobile, close() can fail during LruDelete when releasing file descriptors,
+            // and the default behavior (PANIC) causes abort(). This is safe for single-user mode.
+            single_argv[single_argc++] = "-c";
+            single_argv[single_argc++] = "data_sync_retry=on";
             single_argv[single_argc++] = "-F";
             single_argv[single_argc++] = "-O";
             single_argv[single_argc++] = "-j";
@@ -919,6 +924,11 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
     // Disable startup progress timers to avoid timeout machinery during existing db resume
     single_argv[single_argc++] = "-c";
     single_argv[single_argc++] = "log_startup_progress_interval=0";
+    // CRITICAL: Enable data_sync_retry to prevent PANIC on close() failures during startup.
+    // On mobile, close() can fail during LruDelete when releasing file descriptors,
+    // and the default behavior (PANIC) causes abort(). This is safe for single-user mode.
+    single_argv[single_argc++] = "-c";
+    single_argv[single_argc++] = "data_sync_retry=on";
     if (WASM_PGOPTS[0] != '\0')
     {
         single_argv[single_argc++] = (char *)WASM_PGOPTS;
@@ -943,18 +953,31 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
      * This is critical because InitProcess may fail if shared memory is stale
      * (e.g., after app restart), and proc_exit would otherwise crash.
      * NOTE: We use a STATIC jump buffer to avoid dangling pointer issues. */
+    
+    /* Zero the jump buffer before use to ensure clean state */
+    memset(&pgl_backend_jmp_buf, 0, sizeof(pgl_backend_jmp_buf));
+    
     pgl_boot_jmp = &pgl_backend_jmp_buf;
     pgl_jmp_context = PGL_JMP_BACKEND;
-    fprintf(stderr, "[pgl_backend] *** pgl_boot_jmp set to %p (static buffer, context=BACKEND) ***\n", (void*)pgl_boot_jmp);
+    fprintf(stderr, "[pgl_backend] *** pgl_boot_jmp set to %p (static buffer at %p, size=%zu, context=BACKEND) ***\n", 
+            (void*)pgl_boot_jmp, (void*)&pgl_backend_jmp_buf, sizeof(pgl_backend_jmp_buf));
+    
+    /* Verify the pointer is valid before sigsetjmp */
+    if ((uintptr_t)pgl_boot_jmp < 0x10000) {
+        fprintf(stderr, "[pgl_backend] FATAL: pgl_boot_jmp has invalid address %p!\n", (void*)pgl_boot_jmp);
+        return;
+    }
+    
     if (sigsetjmp(pgl_backend_jmp_buf, 1) != 0)
     {
+        fprintf(stderr, "[pgl_backend] *** sigsetjmp returned non-zero (longjmp occurred) ***\n");
         pgl_boot_jmp = NULL;
         pgl_jmp_context = PGL_JMP_NONE;
         PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during backend init, returning");
         fprintf(stderr, "[pgl_backend] proc_exit intercepted during backend init, returning\n");
         return; /* Return from pgl_backend - caller should handle the error */
     }
-    fprintf(stderr, "[pgl_backend] *** sigsetjmp returned 0, proceeding to AsyncPostgresSingleUserMain ***\n");
+    fprintf(stderr, "[pgl_backend] *** sigsetjmp returned 0, pgl_boot_jmp=%p, proceeding to AsyncPostgresSingleUserMain ***\n", (void*)pgl_boot_jmp);
 #endif
 
     AsyncPostgresSingleUserMain(single_argc_save, single_argv, PGUSER, async_restart);
@@ -1246,6 +1269,11 @@ int pgl_initdb()
         // Disable startup progress timers to avoid timeout machinery during bootstrap
         boot_argv[boot_argc++] = "-c";
         boot_argv[boot_argc++] = "log_startup_progress_interval=0";
+        // CRITICAL: Enable data_sync_retry to prevent PANIC on close() failures during startup.
+        // On mobile, close() can fail during LruDelete when releasing file descriptors,
+        // and the default behavior (PANIC) causes abort(). This is safe for bootstrap mode.
+        boot_argv[boot_argc++] = "-c";
+        boot_argv[boot_argc++] = "data_sync_retry=on";
         // keep resource usage minimal and avoid dynamic shared memory on Android
         boot_argv[boot_argc++] = "-c";
         boot_argv[boot_argc++] = "shared_buffers=16";

@@ -167,10 +167,38 @@ proc_exit(int code)
 	 * stack-local variable. This ensures the jump buffer is always valid when set.
 	 */
 	proc_exit_inprogress = true;
-	if (pgl_boot_jmp)
+	
+	/* Get a local copy of the volatile pointer to avoid race conditions */
+	sigjmp_buf *jmp_buf_ptr = (sigjmp_buf *)pgl_boot_jmp;
+	
+	fprintf(stderr, "[proc_exit] code=%d, pgl_boot_jmp=%p, jmp_buf_ptr=%p\n", 
+			code, (void*)pgl_boot_jmp, (void*)jmp_buf_ptr);
+	
+	if (jmp_buf_ptr != NULL)
 	{
+		/* Validate the jump buffer pointer is in a reasonable address range.
+		 * On iOS/ARM64, valid heap/stack addresses are typically > 0x100000000.
+		 * A pointer value < 0x10000 is almost certainly invalid/corrupted. */
+		uintptr_t ptr_val = (uintptr_t)jmp_buf_ptr;
+		if (ptr_val < 0x10000)
+		{
+			fprintf(stderr, "[proc_exit] ERROR: pgl_boot_jmp contains invalid pointer %p (< 0x10000), NOT jumping!\n",
+					(void*)jmp_buf_ptr);
+			/* Clear the invalid pointer to prevent future crashes */
+			pgl_boot_jmp = NULL;
+			return;
+		}
+		
+		/* Additional sanity check: verify the first few bytes of the jump buffer
+		 * are accessible by reading them. This helps catch corrupted pointers. */
+		volatile unsigned char *test_ptr = (volatile unsigned char *)jmp_buf_ptr;
+		unsigned char test_byte = *test_ptr;  /* Will crash here if pointer is bad */
+		(void)test_byte;  /* Suppress unused variable warning */
+		
+		fprintf(stderr, "[proc_exit] Jumping to pgl_boot_jmp at %p\n", (void*)jmp_buf_ptr);
+		
 		/* Jump back to initialization code - this is expected during bootstrap/init */
-		siglongjmp(*(sigjmp_buf *)pgl_boot_jmp, 1);
+		siglongjmp(*jmp_buf_ptr, 1);
 	}
 	/*
 	 * Outside bootstrap context (pgl_boot_jmp == NULL), we're in normal query
