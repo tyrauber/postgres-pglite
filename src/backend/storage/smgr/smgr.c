@@ -155,6 +155,38 @@ smgrinit(void)
 {
 	int			i;
 
+#ifdef PGL_MOBILE
+	/*
+	 * MOBILE FIX: Reset SMgrRelationHash if it exists from a previous session.
+	 *
+	 * On mobile platforms, the backend may be re-initialized in the same process
+	 * (e.g., after app restart). If SMgrRelationHash still has entries from the
+	 * previous session, they will have stale VFD references that cause crashes
+	 * when we try to close files during cache invalidation.
+	 *
+	 * The safest approach is to destroy the old hash table entirely and let it
+	 * be recreated fresh. We can't call smgrdestroyall() because that would try
+	 * to close files with invalid VFD entries.
+	 */
+	if (SMgrRelationHash != NULL)
+	{
+		fprintf(stderr, "[PGL_MOBILE] smgrinit: Resetting stale SMgrRelationHash\n");
+		fflush(stderr);
+		
+		/*
+		 * Simply destroy the hash table without trying to close any files.
+		 * The VFD cache has already been reset, so any file handles are invalid.
+		 * This will leak memory, but it's better than crashing.
+		 */
+		hash_destroy(SMgrRelationHash);
+		SMgrRelationHash = NULL;
+		dlist_init(&unpinned_relns);
+		
+		fprintf(stderr, "[PGL_MOBILE] smgrinit: SMgrRelationHash reset complete\n");
+		fflush(stderr);
+	}
+#endif
+
 	for (i = 0; i < NSmgr; i++)
 	{
 		if (smgrsw[i].smgr_init)

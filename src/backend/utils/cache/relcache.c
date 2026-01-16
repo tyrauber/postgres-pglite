@@ -3999,6 +3999,32 @@ RelationCacheInitialize(void)
 	HASHCTL		ctl;
 	int			allocsize;
 
+#ifdef PGL_MOBILE
+	/*
+	 * MOBILE FIX: Reset relation cache if it exists from a previous session.
+	 *
+	 * On mobile platforms, the backend may be re-initialized in the same process.
+	 * If RelationIdCache still has entries from the previous session, they will
+	 * have stale SMgrRelation references that cause crashes.
+	 *
+	 * We destroy the old hash table and reset related state.
+	 */
+	if (RelationIdCache != NULL)
+	{
+		fprintf(stderr, "[PGL_MOBILE] RelationCacheInitialize: Resetting stale RelationIdCache\n");
+		fflush(stderr);
+		
+		hash_destroy(RelationIdCache);
+		RelationIdCache = NULL;
+		criticalRelcachesBuilt = false;
+		criticalSharedRelcachesBuilt = false;
+		relcacheInvalsReceived = 0L;
+		
+		fprintf(stderr, "[PGL_MOBILE] RelationCacheInitialize: Reset complete\n");
+		fflush(stderr);
+	}
+#endif
+
 	/*
 	 * make sure cache memory context exists
 	 */

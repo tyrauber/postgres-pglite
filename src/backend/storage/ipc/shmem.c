@@ -89,6 +89,35 @@ slock_t    *ShmemLock;			/* spinlock for shared memory and LWLock
 
 static HTAB *ShmemIndex = NULL; /* primary index hashtable for shmem */
 
+#ifdef PGL_MOBILE
+/*
+ * PglMobileResetShmemState() --- Reset shared memory state for mobile restart.
+ *
+ * On mobile platforms, the backend may be re-initialized in the same process.
+ * This function resets all static shared memory pointers to NULL so that
+ * the initialization code can run again with fresh shared memory.
+ *
+ * This must be called BEFORE any shared memory initialization functions.
+ */
+void
+PglMobileResetShmemState(void)
+{
+	fprintf(stderr, "[PGL_MOBILE] PglMobileResetShmemState: Resetting shared memory state\n");
+	fprintf(stderr, "[PGL_MOBILE]   ShmemSegHdr=%p ShmemBase=%p ShmemEnd=%p ShmemIndex=%p\n",
+			(void*)ShmemSegHdr, ShmemBase, ShmemEnd, (void*)ShmemIndex);
+	fflush(stderr);
+	
+	ShmemSegHdr = NULL;
+	ShmemBase = NULL;
+	ShmemEnd = NULL;
+	ShmemLock = NULL;
+	ShmemIndex = NULL;
+	
+	fprintf(stderr, "[PGL_MOBILE] PglMobileResetShmemState: Reset complete\n");
+	fflush(stderr);
+}
+#endif /* PGL_MOBILE */
+
 
 /*
  *	InitShmemAccess() --- set up basic pointers to shared memory.

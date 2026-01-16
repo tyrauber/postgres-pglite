@@ -1,12 +1,93 @@
 #include <setjmp.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <dirent.h>
 
 volatile int sf_connected = 0;
 FILE * single_mode_feed = NULL;
 volatile bool inloop = false;
 volatile sigjmp_buf local_sigjmp_buf;
 bool repl = false;
+
+// ============================================================================
+// WAL/Recovery Debug Logging
+// ============================================================================
+#ifdef PGL_MOBILE
+static void debug_log_wal_state(const char* phase) {
+    const char* pgdata = getenv("PGDATA");
+    if (!pgdata || !*pgdata) {
+        PGL_LOG_INFO("[WAL_DEBUG] %s: PGDATA not set", phase);
+        return;
+    }
+    
+    PGL_LOG_INFO("[WAL_DEBUG] === %s WAL State ===", phase);
+    
+    // Check pg_wal directory
+    char wal_dir[1024];
+    snprintf(wal_dir, sizeof(wal_dir), "%s/pg_wal", pgdata);
+    struct stat st;
+    if (stat(wal_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+        PGL_LOG_INFO("[WAL_DEBUG] pg_wal exists at: %s", wal_dir);
+        
+        // List WAL files
+        DIR* dir = opendir(wal_dir);
+        if (dir) {
+            struct dirent* entry;
+            int wal_count = 0;
+            while ((entry = readdir(dir)) != NULL) {
+                if (entry->d_name[0] == '.') continue;
+                char file_path[1024];
+                snprintf(file_path, sizeof(file_path), "%s/%s", wal_dir, entry->d_name);
+                struct stat fst;
+                if (stat(file_path, &fst) == 0) {
+                    PGL_LOG_INFO("[WAL_DEBUG]   WAL: %s (%lld bytes)", entry->d_name, (long long)fst.st_size);
+                    wal_count++;
+                }
+            }
+            closedir(dir);
+            PGL_LOG_INFO("[WAL_DEBUG] Total WAL files: %d", wal_count);
+        }
+    } else {
+        PGL_LOG_INFO("[WAL_DEBUG] pg_wal does NOT exist (first run or clean state)");
+    }
+    
+    // Check pg_control
+    char ctrl_path[1024];
+    snprintf(ctrl_path, sizeof(ctrl_path), "%s/global/pg_control", pgdata);
+    if (stat(ctrl_path, &st) == 0) {
+        PGL_LOG_INFO("[WAL_DEBUG] pg_control: %lld bytes", (long long)st.st_size);
+    } else {
+        PGL_LOG_INFO("[WAL_DEBUG] pg_control: MISSING (errno=%d)", errno);
+    }
+    
+    // Check recovery signals
+    char recovery_signal[1024];
+    snprintf(recovery_signal, sizeof(recovery_signal), "%s/recovery.signal", pgdata);
+    if (stat(recovery_signal, &st) == 0) {
+        PGL_LOG_INFO("[WAL_DEBUG] WARNING: recovery.signal EXISTS - in recovery mode!");
+    }
+    
+    char standby_signal[1024];
+    snprintf(standby_signal, sizeof(standby_signal), "%s/standby.signal", pgdata);
+    if (stat(standby_signal, &st) == 0) {
+        PGL_LOG_INFO("[WAL_DEBUG] WARNING: standby.signal EXISTS - in standby mode!");
+    }
+    
+    PGL_LOG_INFO("[WAL_DEBUG] === End %s WAL State ===", phase);
+}
+
+static void debug_log_file_state(const char* path, const char* description) {
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        PGL_LOG_INFO("[FILE_DEBUG] %s: %s (%lld bytes)", description, path, (long long)st.st_size);
+        if (st.st_size == 0) {
+            PGL_LOG_ERROR("[FILE_DEBUG] WARNING: %s is EMPTY!", description);
+        }
+    } else {
+        PGL_LOG_ERROR("[FILE_DEBUG] %s: %s MISSING (errno=%d)", description, path, errno);
+    }
+}
+#endif
 
 __attribute__((export_name("pgl_shutdown")))
 void
@@ -134,17 +215,30 @@ interactive_file() {
 void
 RePostgresSingleUserMain(int single_argc, char *single_argv[], const char *username)
 {
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] ENTRY - username=%s", username ? username : "NULL");
+    debug_log_wal_state("PRE-SINGLE-USER");
+#endif
 #if PGDEBUG
 printf("# 123: RePostgresSingleUserMain progname=%s for %s feed=%s\n", progname, single_argv[0], IDB_PIPE_SINGLE);
 #endif
     // On mobile, the single-user script is emitted under PREFIX/runtime
     char idb_single_path[1024];
     snprintf(idb_single_path, sizeof(idb_single_path), "%s/initdb.single.txt", PREFIX ? (const char*)PREFIX : WASM_PREFIX);
+#ifdef PGL_MOBILE
+    debug_log_file_state(idb_single_path, "initdb.single.txt");
+#endif
     single_mode_feed = fopen(idb_single_path, "r");
     if (!single_mode_feed) {
         fprintf(stderr, "[pgl_single] failed to open %s (errno=%d)\n", idb_single_path, errno);
+#ifdef PGL_MOBILE
+        PGL_LOG_INFO("[RePostgresSingleUserMain] No single-user script found, skipping replay");
+#endif
         return; // nothing to replay; continue to backend startup
     }
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] Opened single-user script: %s", idb_single_path);
+#endif
 
     // should be template1.
     const char *dbname = NULL;
@@ -192,7 +286,13 @@ IgnoreSystemIndexes = false;
      * in RecoveryInProgress() when accessing XLogCtl->SharedRecoveryState.
      * See: docs/issues/pglite-currentresourceowner-crash.md
      */
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] About to CreateSharedMemoryAndSemaphores()");
+#endif
     CreateSharedMemoryAndSemaphores();
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] CreateSharedMemoryAndSemaphores() completed");
+#endif
 
     PgStartTime = GetCurrentTimestamp();
 
@@ -205,7 +305,14 @@ IgnoreSystemIndexes = false;
     SetProcessingMode(InitProcessing);
 
     /* Early initialization */
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] About to call BaseInit()");
+#endif
     BaseInit();
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] BaseInit() completed - WAL recovery may have occurred");
+    debug_log_wal_state("POST-BASEINIT");
+#endif
 PDEBUG("# 153: Re-InitPostgres");
 if (am_walsender)
     PDEBUG("# 155: am_walsender == true");
@@ -283,9 +390,19 @@ PDEBUG("# 164:" __FILE__);
     }
 */
 
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] About to call interactive_file() for single-user replay");
+#endif
   interactive_file();
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] interactive_file() completed");
+    debug_log_wal_state("POST-INTERACTIVE-FILE");
+#endif
   fclose(single_mode_feed);
   single_mode_feed = NULL;
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[RePostgresSingleUserMain] EXIT - single-user replay complete");
+#endif
 
 /*
     while (repl) { interactive_file(); }
@@ -307,6 +424,11 @@ void
 AsyncPostgresSingleUserMain(int argc, char *argv[], const char *username, int async_restart)
 {
 	const char *dbname = NULL;
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] ENTRY - username=%s async_restart=%d", 
+                 username ? username : "NULL", async_restart);
+    debug_log_wal_state("PRE-ASYNC-SINGLE-USER");
+#endif
 PDEBUG("# 254:"__FILE__);
 
 // if (!async_restart)	/* Initialize startup process environment. */
@@ -376,7 +498,13 @@ PDEBUG("# 127"); /* on_shmem_exit stubs call start here */
 	 */
 	InitializeWalConsistencyChecking();
 
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] About to CreateSharedMemoryAndSemaphores()");
+#endif
 	CreateSharedMemoryAndSemaphores();
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] CreateSharedMemoryAndSemaphores() completed");
+#endif
 
 	/*
 	 * Remember stand-alone backend startup time,roughly at the same point
@@ -388,13 +516,26 @@ PDEBUG("# 127"); /* on_shmem_exit stubs call start here */
 	 * Create a per-backend PGPROC struct in shared memory. We must do this
 	 * before we can use LWLocks.
 	 */
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] About to InitProcess()");
+#endif
 	InitProcess();
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] InitProcess() completed");
+#endif
 
 // main
 	SetProcessingMode(InitProcessing);
 
 	/* Early initialization */
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] About to BaseInit() - WAL recovery happens here");
+#endif
 	BaseInit();
+#ifdef PGL_MOBILE
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] BaseInit() completed - WAL recovery finished");
+    debug_log_wal_state("POST-ASYNC-BASEINIT");
+#endif
 async_db_change:;
 
 PDEBUG("# 167");

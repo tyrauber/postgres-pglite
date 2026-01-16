@@ -92,6 +92,36 @@ static void ProcKill(int code, Datum arg);
 static void AuxiliaryProcKill(int code, Datum arg);
 static void CheckDeadLock(void);
 
+#ifdef PGL_MOBILE
+/*
+ * PglMobileResetProcState() --- Reset process state for mobile restart.
+ *
+ * On mobile platforms, the backend may be re-initialized in the same process.
+ * This function resets all static process-related pointers to NULL so that
+ * the initialization code can run again with fresh shared memory.
+ */
+void
+PglMobileResetProcState(void)
+{
+	fprintf(stderr, "[PGL_MOBILE] PglMobileResetProcState: Resetting process state\n");
+	fprintf(stderr, "[PGL_MOBILE]   ProcGlobal=%p MyProc=%p AuxiliaryProcs=%p\n",
+			(void*)ProcGlobal, (void*)MyProc, (void*)AuxiliaryProcs);
+	fflush(stderr);
+	
+	ProcStructLock = NULL;
+	ProcGlobal = NULL;
+	AuxiliaryProcs = NULL;
+	PreparedXactProcs = NULL;
+	MyProc = NULL;
+	lockAwaited = NULL;
+	deadlock_state = DS_NOT_YET_CHECKED;
+	got_deadlock_timeout = false;
+	
+	fprintf(stderr, "[PGL_MOBILE] PglMobileResetProcState: Reset complete\n");
+	fflush(stderr);
+}
+#endif /* PGL_MOBILE */
+
 
 /*
  * Report shared-memory space needed by InitProcGlobal.

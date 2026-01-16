@@ -25,6 +25,9 @@
 
 
 /* shmem.c */
+#ifdef PGL_MOBILE
+extern void PglMobileResetShmemState(void);
+#endif
 extern void InitShmemAccess(void *seghdr);
 extern void InitShmemAllocation(void);
 extern void *ShmemAlloc(Size size);

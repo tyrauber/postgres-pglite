@@ -17,6 +17,10 @@
 
 #include "pgl_os.h"
 
+#ifdef PGL_MOBILE
+#include <dirent.h>  /* For directory listing in debug code */
+#endif
+
 // ============================================================================
 // Log Callback System - Global State and API
 // ============================================================================
@@ -153,6 +157,11 @@ static void pgl_install_android_stderr_redirect(void)
 #include "utils/pg_locale.h"
 #include "tcop/tcopprot.h"
 #include "lib/stringinfo.h"
+
+#ifdef PGL_MOBILE
+#include "storage/shmem.h"
+#include "storage/proc.h"
+#endif
 
 /* Temporary log hook to surface bootstrap errors into stderr in C (no lambdas) */
 static void pgl_boot_emit_hook(ErrorData *ed)
@@ -633,12 +642,22 @@ extern void pgl_mobile_init_extensions(void);
 
 __attribute__((export_name("pgl_backend"))) void pgl_backend()
 {
+    /* IMMEDIATE logging - before anything else */
+    fprintf(stderr, "[pgl_backend] *** IMMEDIATE ENTRY - function called ***\n");
+    fflush(stderr);
+    
 #ifdef PGL_MOBILE
+    fprintf(stderr, "[pgl_backend] About to call pgl_mobile_force_link_extensions()\n");
+    fflush(stderr);
+    
     /* CRITICAL: Call this first to ensure extension symbols are linked.
      * Without this call, the linker may strip plpgsql_call_handler, citext_eq, etc.
      * because they're only referenced via function pointers in the symbol table.
      */
     pgl_mobile_force_link_extensions();
+    
+    fprintf(stderr, "[pgl_backend] pgl_mobile_force_link_extensions() completed\n");
+    fflush(stderr);
 
     PGL_LOG_ERROR("%s", "[pgl_backend] *** ENTRY: pgl_backend function called ***");
     PGL_LOG_ERROR("%s", "[pgl_backend] *** This confirms we reached pgl_backend after pgl_initdb ***");
@@ -655,6 +674,25 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
         fprintf(stderr, "[pgl_backend] Backend already initialized in this process, skipping\n");
         return;
     }
+    
+    /*
+     * MOBILE FIX: Reset all shared memory and process state before initialization.
+     *
+     * On mobile platforms, when the app is killed and restarted, we get a new process
+     * but the database files on disk may have stale references. Additionally, if the
+     * backend is being re-initialized in the same process (e.g., after an error),
+     * the static pointers to shared memory structures may be stale.
+     *
+     * We MUST reset these before any shared memory operations to ensure clean state.
+     */
+    fprintf(stderr, "[pgl_backend] MOBILE: Resetting shared memory and process state for clean initialization\n");
+    fflush(stderr);
+    
+    PglMobileResetShmemState();
+    PglMobileResetProcState();
+    
+    fprintf(stderr, "[pgl_backend] MOBILE: State reset complete, proceeding with initialization\n");
+    fflush(stderr);
 #endif
     fprintf(stderr, "[pgl_backend] *** ENTRY: pgl_backend function called ***\n");
 #ifdef __ANDROID__
@@ -1105,11 +1143,94 @@ int pgl_initdb()
     const char *__force_env = getenv("PGL_FORCE_INITDB");
     bool __force_initdb = (__force_env && __force_env[0] == '1');
     PGL_LOG_INFO("[pgl_initdb] About to check if database exists at PGDATA=%s", PGDATA ? (const char *)PGDATA : "");
+    
+#ifdef PGL_MOBILE
+    /* DEBUG: List PGDATA directory contents BEFORE the check */
+    {
+        struct stat pgdata_stat;
+        int stat_rc = stat((const char *)PGDATA, &pgdata_stat);
+        PGL_LOG_ERROR("[pgl_initdb] PGDATA stat: path=%s rc=%d errno=%d", 
+                      PGDATA ? (const char *)PGDATA : "NULL", stat_rc, stat_rc ? errno : 0);
+        if (stat_rc == 0) {
+            PGL_LOG_ERROR("[pgl_initdb] PGDATA exists: mode=%o size=%lld", 
+                          pgdata_stat.st_mode, (long long)pgdata_stat.st_size);
+            
+            /* List directory contents */
+            DIR *dir = opendir((const char *)PGDATA);
+            if (dir) {
+                struct dirent *entry;
+                int file_count = 0;
+                PGL_LOG_ERROR("[pgl_initdb] PGDATA directory contents:");
+                while ((entry = readdir(dir)) != NULL) {
+                    if (entry->d_name[0] == '.') continue;
+                    char full_path[1024];
+                    snprintf(full_path, sizeof(full_path), "%s/%s", (const char *)PGDATA, entry->d_name);
+                    struct stat fst;
+                    if (stat(full_path, &fst) == 0) {
+                        PGL_LOG_ERROR("[pgl_initdb]   - %s (%s, %lld bytes)", 
+                                      entry->d_name, 
+                                      S_ISDIR(fst.st_mode) ? "DIR" : "FILE",
+                                      (long long)fst.st_size);
+                    } else {
+                        PGL_LOG_ERROR("[pgl_initdb]   - %s (stat failed)", entry->d_name);
+                    }
+                    file_count++;
+                }
+                closedir(dir);
+                PGL_LOG_ERROR("[pgl_initdb] Total items in PGDATA: %d", file_count);
+            } else {
+                PGL_LOG_ERROR("[pgl_initdb] Cannot opendir PGDATA: errno=%d", errno);
+            }
+        } else {
+            PGL_LOG_ERROR("[pgl_initdb] PGDATA does not exist (fresh install expected)");
+        }
+        
+        /* Also check PG_VERSION directly */
+        char pg_version_path[1024];
+        snprintf(pg_version_path, sizeof(pg_version_path), "%s/PG_VERSION", (const char *)PGDATA);
+        struct stat pv_stat;
+        int pv_rc = stat(pg_version_path, &pv_stat);
+        PGL_LOG_ERROR("[pgl_initdb] PG_VERSION check: path=%s exists=%s size=%lld",
+                      pg_version_path, pv_rc == 0 ? "YES" : "NO",
+                      pv_rc == 0 ? (long long)pv_stat.st_size : 0);
+    }
+#endif
+
     if (!chdir(PGDATA))
     {
         int __has_pgversion = (access("PG_VERSION", F_OK) == 0);
         fprintf(stderr, "[pgl_initdb] chdir PGDATA ok; PG_VERSION=%s force=%d\n", __has_pgversion ? "yes" : "no", __force_initdb ? 1 : 0);
         PGL_LOG_INFO("[pgl_initdb] Database exists check: PG_VERSION=%s force=%d", __has_pgversion ? "yes" : "no", __force_initdb ? 1 : 0);
+        
+#ifdef PGL_MOBILE
+        /* DEBUG: If PG_VERSION exists, read its contents */
+        if (__has_pgversion) {
+            FILE *pv_file = fopen("PG_VERSION", "r");
+            if (pv_file) {
+                char pv_content[64] = {0};
+                size_t read_bytes = fread(pv_content, 1, sizeof(pv_content) - 1, pv_file);
+                fclose(pv_file);
+                /* Remove trailing newline */
+                for (size_t i = 0; i < read_bytes; i++) {
+                    if (pv_content[i] == '\n' || pv_content[i] == '\r') {
+                        pv_content[i] = '\0';
+                        break;
+                    }
+                }
+                PGL_LOG_ERROR("[pgl_initdb] PG_VERSION content: '%s' (%zu bytes)", pv_content, read_bytes);
+            }
+            
+            /* Also check pg_control */
+            char ctrl_path[1024];
+            snprintf(ctrl_path, sizeof(ctrl_path), "%s/global/pg_control", (const char *)PGDATA);
+            struct stat ctrl_stat;
+            int ctrl_rc = stat(ctrl_path, &ctrl_stat);
+            PGL_LOG_ERROR("[pgl_initdb] pg_control: exists=%s size=%lld",
+                          ctrl_rc == 0 ? "YES" : "NO",
+                          ctrl_rc == 0 ? (long long)ctrl_stat.st_size : 0);
+        }
+#endif
+        
         if (__has_pgversion && !__force_initdb)
         {
             chdir("/");

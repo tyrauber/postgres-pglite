@@ -908,7 +908,43 @@ durable_unlink(const char *fname, int elevel)
 void
 InitFileAccess(void)
 {
+#ifdef PGL_MOBILE
+	fprintf(stderr, "[InitFileAccess] ENTRY SizeVfdCache=%zu VfdCache=%p\n",
+			SizeVfdCache, (void*)VfdCache);
+	fflush(stderr);
+
+	/*
+	 * MOBILE FIX: Reset VFD cache if it was already initialized.
+	 *
+	 * On mobile platforms, the backend may be re-initialized in the same process
+	 * (e.g., after app restart). If the VFD cache already exists, it may have
+	 * stale entries with invalid file descriptors and garbage pointers.
+	 *
+	 * We need to free the old cache and start fresh. We can't properly close
+	 * any files because the file descriptors are invalid in the new session.
+	 */
+	if (SizeVfdCache > 0 || VfdCache != NULL)
+	{
+		fprintf(stderr, "[InitFileAccess] MOBILE: Resetting stale VFD cache (SizeVfdCache=%zu)\n",
+				SizeVfdCache);
+		fflush(stderr);
+		
+		/* Free the old VFD cache - don't try to close files, they're invalid */
+		if (VfdCache != NULL)
+		{
+			free(VfdCache);
+			VfdCache = NULL;
+		}
+		SizeVfdCache = 0;
+		nfile = 0;
+		have_xact_temporary_files = false;
+		
+		fprintf(stderr, "[InitFileAccess] MOBILE: VFD cache reset complete\n");
+		fflush(stderr);
+	}
+#else
 	Assert(SizeVfdCache == 0);	/* call me only once */
+#endif
 
 	/* initialize cache header entry */
 	VfdCache = (Vfd *) malloc(sizeof(Vfd));
@@ -921,6 +957,12 @@ InitFileAccess(void)
 	VfdCache->fd = VFD_CLOSED;
 
 	SizeVfdCache = 1;
+
+#ifdef PGL_MOBILE
+	fprintf(stderr, "[InitFileAccess] EXIT SizeVfdCache=%zu VfdCache=%p\n",
+			SizeVfdCache, (void*)VfdCache);
+	fflush(stderr);
+#endif
 }
 
 /*
@@ -1499,6 +1541,32 @@ FileAccess(File file)
 {
 	int			returnValue;
 
+#ifdef PGL_MOBILE
+	/* Defensive checks for mobile platforms */
+	fprintf(stderr, "[FileAccess] ENTRY file=%d SizeVfdCache=%zu VfdCache=%p\n",
+			file, SizeVfdCache, (void*)VfdCache);
+	fflush(stderr);
+	
+	if (VfdCache == NULL)
+	{
+		fprintf(stderr, "[FileAccess] FATAL: VfdCache is NULL! InitFileAccess not called?\n");
+		fflush(stderr);
+		return -1;
+	}
+	
+	if (file <= 0 || file >= (int)SizeVfdCache)
+	{
+		fprintf(stderr, "[FileAccess] FATAL: Invalid file index %d (SizeVfdCache=%zu)\n",
+				file, SizeVfdCache);
+		fflush(stderr);
+		return -1;
+	}
+	
+	fprintf(stderr, "[FileAccess] VfdCache[%d].fileName=%p VfdCache[%d].fd=%d\n",
+			file, (void*)VfdCache[file].fileName, file, VfdCache[file].fd);
+	fflush(stderr);
+#endif
+
 	DO_DB(elog(LOG, "FileAccess %d (%s)",
 			   file, VfdCache[file].fileName));
 
@@ -1509,6 +1577,10 @@ FileAccess(File file)
 
 	if (FileIsNotOpen(file))
 	{
+#ifdef PGL_MOBILE
+		fprintf(stderr, "[FileAccess] File %d is not open, calling LruInsert\n", file);
+		fflush(stderr);
+#endif
 		returnValue = LruInsert(file);
 		if (returnValue != 0)
 			return returnValue;
@@ -1519,11 +1591,18 @@ FileAccess(File file)
 		 * We now know that the file is open and that it is not the last one
 		 * accessed, so we need to move it to the head of the Lru ring.
 		 */
-
+#ifdef PGL_MOBILE
+		fprintf(stderr, "[FileAccess] File %d is open, moving to head of LRU\n", file);
+		fflush(stderr);
+#endif
 		Delete(file);
 		Insert(file);
 	}
 
+#ifdef PGL_MOBILE
+	fprintf(stderr, "[FileAccess] EXIT file=%d success\n", file);
+	fflush(stderr);
+#endif
 	return 0;
 }
 

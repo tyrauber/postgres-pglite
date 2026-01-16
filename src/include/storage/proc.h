@@ -455,6 +455,9 @@ extern PGDLLIMPORT bool log_lock_waits;
 /*
  * Function Prototypes
  */
+#ifdef PGL_MOBILE
+extern void PglMobileResetProcState(void);
+#endif
 extern int	ProcGlobalSemas(void);
 extern Size ProcGlobalShmemSize(void);
 extern void InitProcGlobal(void);

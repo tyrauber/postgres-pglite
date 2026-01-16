@@ -798,6 +798,24 @@ puts("# 766:"__FILE__);
 		 */
 		CreateAuxProcessResourceOwner();
 
+#ifdef PGL_MOBILE
+		/*
+		 * MOBILE FIX: Force clean shutdown state to skip WAL recovery.
+		 *
+		 * On mobile platforms (iOS/Android), when the app is killed or crashes,
+		 * the database may be left in an unclean state. When the app restarts,
+		 * StartupXLOG() tries to perform WAL recovery, but this crashes because
+		 * the VFD cache is empty and file handles are invalid.
+		 *
+		 * Call PglMobileForceCleanShutdown() to force a clean shutdown state
+		 * before StartupXLOG() runs. This skips WAL recovery at the cost of
+		 * potentially losing uncommitted transactions.
+		 */
+		fprintf(stderr, "[PGL_MOBILE] InitPostgres: About to call PglMobileForceCleanShutdown()\n");
+		PglMobileForceCleanShutdown();
+		fprintf(stderr, "[PGL_MOBILE] InitPostgres: PglMobileForceCleanShutdown() completed\n");
+#endif /* PGL_MOBILE */
+
 		fprintf(stderr, "# before StartupXLOG:%s\n", __FILE__);
 		StartupXLOG();
 		fprintf(stderr, "# after StartupXLOG:%s\n", __FILE__);

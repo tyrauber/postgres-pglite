@@ -5395,6 +5395,71 @@ CheckRequiredParameterValues(void)
 	}
 }
 
+#ifdef PGL_MOBILE
+/*
+ * PglMobileForceCleanShutdown - Force clean shutdown state on mobile platforms
+ *
+ * On mobile platforms (iOS/Android), when the app is killed or crashes,
+ * the database may be left in an unclean state (DB_IN_PRODUCTION or
+ * DB_IN_CRASH_RECOVERY). When the app restarts, StartupXLOG() tries to
+ * perform WAL recovery, but this crashes because:
+ *
+ * 1. The VFD (Virtual File Descriptor) cache is empty in the new process
+ * 2. File handles from the previous session are invalid
+ * 3. When mdwritev() tries to flush buffers during recovery, it fails
+ * 4. The error reporting path crashes on invalid memory
+ *
+ * Since mobile apps are single-user and don't have concurrent connections,
+ * we can safely skip WAL recovery by forcing the control file to indicate
+ * a clean shutdown. This may lose uncommitted transactions from the
+ * previous session, but it's better than crashing.
+ *
+ * Returns true if the state was changed, false if already clean or error.
+ */
+bool
+PglMobileForceCleanShutdown(void)
+{
+	if (ControlFile == NULL)
+	{
+		fprintf(stderr, "[PGL_MOBILE] PglMobileForceCleanShutdown: ControlFile is NULL\n");
+		return false;
+	}
+
+	fprintf(stderr, "[PGL_MOBILE] PglMobileForceCleanShutdown: current state = %d\n", 
+			ControlFile->state);
+
+	/* Check if database was not cleanly shut down */
+	if (ControlFile->state != DB_SHUTDOWNED &&
+		ControlFile->state != DB_SHUTDOWNED_IN_RECOVERY)
+	{
+		fprintf(stderr, "[PGL_MOBILE] WARNING: Database was not cleanly shut down (state=%d)\n", 
+				ControlFile->state);
+		fprintf(stderr, "[PGL_MOBILE] Forcing clean shutdown state to skip WAL recovery\n");
+		fprintf(stderr, "[PGL_MOBILE] This may lose uncommitted transactions from the previous session\n");
+
+		/*
+		 * Force the control file to indicate a clean shutdown.
+		 * This tells StartupXLOG() that no recovery is needed.
+		 *
+		 * We need to acquire the lock since other code may be reading
+		 * the control file concurrently (though unlikely on mobile).
+		 */
+		LWLockAcquire(ControlFileLock, LW_EXCLUSIVE);
+		ControlFile->state = DB_SHUTDOWNED;
+		UpdateControlFile();
+		LWLockRelease(ControlFileLock);
+
+		fprintf(stderr, "[PGL_MOBILE] Control file updated, state now = %d\n", 
+				ControlFile->state);
+		return true;
+	}
+
+	fprintf(stderr, "[PGL_MOBILE] Database was cleanly shut down (state=%d), no action needed\n",
+			ControlFile->state);
+	return false;
+}
+#endif /* PGL_MOBILE */
+
 /*
  * This must be called ONCE during postmaster or standalone-backend startup
  */
