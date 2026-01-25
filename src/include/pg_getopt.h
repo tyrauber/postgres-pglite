@@ -43,9 +43,15 @@ extern PGDLLIMPORT int optopt;
 /*
  * Some platforms have optreset but fail to declare it in <getopt.h>, so cope.
  * Cygwin, however, doesn't like this either.
+ *
+ * For Linux/glibc without native optreset support, pgl_mobile_shims.c provides
+ * a dummy definition (PGL_MOBILE builds only).
  */
 #if defined(HAVE_INT_OPTRESET) && !defined(__CYGWIN__)
 extern PGDLLIMPORT int optreset;
+#elif defined(PGL_MOBILE) && defined(__linux__)
+/* On Linux mobile builds, optreset is provided by pgl_mobile_shims.c */
+extern int optreset;
 #endif
 
 /* Provide getopt() declaration if the platform doesn't have it */

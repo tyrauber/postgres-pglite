@@ -53,6 +53,16 @@ char	   *optarg;				/* argument associated with option */
 
 #endif
 
+/*
+ * On Linux with glibc, optreset doesn't exist (it's BSD-specific).
+ * But some PostgreSQL code (bootstrap.c, postgres.c, postmaster.c)
+ * unconditionally assigns to it. Provide a dummy variable that can
+ * be assigned to without effect on Linux mobile builds.
+ */
+#if defined(PGL_MOBILE) && defined(__linux__) && !defined(HAVE_INT_OPTRESET)
+int			optreset = 0;		/* dummy for glibc compatibility */
+#endif
+
 #define BADCH	(int)'?'
 #define BADARG	(int)':'
 #define EMSG	""

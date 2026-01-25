@@ -237,3 +237,17 @@ pg_atomic_fetch_add_u64_impl(volatile pg_atomic_uint64 *ptr, int64 add_)
 }
 
 #endif							/* PG_HAVE_ATOMIC_U64_SIMULATION */
+
+/*
+ * On Linux with glibc, optreset doesn't exist (it's BSD-specific).
+ * But some PostgreSQL code (bootstrap.c, postgres.c, postmaster.c)
+ * unconditionally assigns to it. Provide a dummy variable that can
+ * be assigned to without effect on Linux mobile builds.
+ *
+ * This is placed here in atomics.c because this file is always compiled
+ * as part of the backend, unlike src/port/getopt.c which is only compiled
+ * when the system lacks getopt.
+ */
+#if defined(PGL_MOBILE) && defined(__linux__) && !defined(HAVE_INT_OPTRESET)
+int			optreset = 0;
+#endif

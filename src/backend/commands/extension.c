@@ -29,7 +29,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifdef PGL_MOBILE
+#if defined(PGL_MOBILE) && defined(HAVE_LIBZ)
 #include <zlib.h>
 #endif
 
@@ -3511,7 +3511,7 @@ ExecAlterExtensionContentsRecurse(AlterExtensionContentsStmt *stmt,
 	}
 }
 
-#ifdef PGL_MOBILE
+#if defined(PGL_MOBILE) && defined(HAVE_LIBZ)
 /*
  * Get the cache directory for decompressed files.
  * On mobile, we cache decompressed files to avoid repeated decompression.
@@ -3704,7 +3704,7 @@ read_gzipped_file_cached(const char *gz_filename, int *length)
 	buf[*length] = '\0';
 	return buf;
 }
-#endif /* PGL_MOBILE */
+#endif /* PGL_MOBILE && HAVE_LIBZ */
 
 /*
  * Read the whole of file into memory.
@@ -3724,7 +3724,7 @@ read_whole_file(const char *filename, int *length)
 	size_t		bytes_to_read;
 	struct stat fst;
 
-#ifdef PGL_MOBILE
+#if defined(PGL_MOBILE) && defined(HAVE_LIBZ)
 	/* Check if this is a .gz file */
 	size_t filename_len = strlen(filename);
 	if (filename_len > 3 && strcmp(filename + filename_len - 3, ".gz") == 0)
@@ -3732,23 +3732,23 @@ read_whole_file(const char *filename, int *length)
 		/* Direct .gz file - decompress with caching */
 		return read_gzipped_file_cached(filename, length);
 	}
-	
+
 	/* Check if file exists; if not, try .gz version */
 	if (stat(filename, &fst) < 0)
 	{
 		char gz_filename[MAXPGPATH];
 		snprintf(gz_filename, sizeof(gz_filename), "%s.gz", filename);
-		
+
 		if (stat(gz_filename, &fst) == 0)
 		{
 			/* .gz version exists - use it */
 			elog(DEBUG1, "read_whole_file: using gzipped version %s", gz_filename);
 			return read_gzipped_file_cached(gz_filename, length);
 		}
-		
+
 		/* Neither exists - fall through to original error handling */
 	}
-#endif
+#endif /* PGL_MOBILE && HAVE_LIBZ */
 
 	if (stat(filename, &fst) < 0)
 		ereport(ERROR,

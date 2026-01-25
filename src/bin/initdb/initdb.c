@@ -59,7 +59,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-#ifdef PGL_MOBILE
+#if defined(PGL_MOBILE) && defined(HAVE_LIBZ)
 #include <zlib.h>
 #endif
 #include <time.h>
@@ -682,7 +682,7 @@ guc_value_requires_quotes(const char *guc_value)
 	return true; /* all else must be quoted */
 }
 
-#ifdef PGL_MOBILE
+#if defined(PGL_MOBILE) && defined(HAVE_LIBZ)
 /*
  * Get the cache directory for decompressed files (initdb version).
  */
@@ -806,7 +806,7 @@ pgl_initdb_decompress_to_cache(const char *gz_path)
 	pg_log_info("decompressed to: %s", cache_path);
 	return cache_path;
 }
-#endif /* PGL_MOBILE */
+#endif /* PGL_MOBILE && HAVE_LIBZ */
 
 /*
  * get the lines from a text file
@@ -827,7 +827,7 @@ readfile(const char *path)
 	int n;
 	const char *actual_path = path;
 
-#ifdef PGL_MOBILE
+#if defined(PGL_MOBILE) && defined(HAVE_LIBZ)
 	struct stat fst;
 	size_t path_len = strlen(path);
 	
@@ -852,7 +852,7 @@ readfile(const char *path)
 				pg_fatal("could not decompress file \"%s\"", gz_path);
 		}
 	}
-#endif
+#endif /* PGL_MOBILE && HAVE_LIBZ */
 
 	if ((infile = fopen(actual_path, "r")) == NULL)
 		pg_fatal("could not open file \"%s\" for reading: %m", actual_path);

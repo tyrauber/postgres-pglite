@@ -61,6 +61,13 @@ typedef struct Port Port;
 
 // Android API 24+: preadv/pwritev provided by bionic; no fallbacks necessary.
 
+// Linux glibc doesn't have optreset (BSD-specific). PostgreSQL's getopt.c
+// doesn't use it, but some code (bootstrap.c) sets it unconditionally.
+// Provide a dummy variable for non-BSD platforms.
+#if defined(__linux__) && !defined(HAVE_INT_OPTRESET)
+extern int optreset;  // Defined in pgl_mobile_shims.c
+#endif
+
 
 
 /* Note: On native builds, WASM export_name attributes are ignored.

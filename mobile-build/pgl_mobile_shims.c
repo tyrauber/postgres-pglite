@@ -20,3 +20,6 @@ void pgl_shutdown(void) { pg_shutdown(); }
 // IOS_RUNTIME_DIR, ANDROID_RUNTIME_DIR) to find bundled PostgreSQL data files.
 // See: vendor/postgres-pglite/src/port/path.c
 
+// NOTE: optreset is now provided in src/port/getopt.c for Linux/PGL_MOBILE builds.
+// See the #if defined(PGL_MOBILE) && defined(__linux__) block there.
+
