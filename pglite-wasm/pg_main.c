@@ -1058,7 +1058,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     /* Verify the pointer is valid before sigsetjmp */
     if ((uintptr_t)pgl_boot_jmp < 0x10000) {
         fprintf(stderr, "[pgl_backend] FATAL: pgl_boot_jmp has invalid address %p!\n", (void*)pgl_boot_jmp);
-        return;
+        return -1;
     }
     
     if (sigsetjmp(pgl_backend_jmp_buf, 1) != 0)
