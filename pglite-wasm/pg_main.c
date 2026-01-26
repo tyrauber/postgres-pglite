@@ -19,6 +19,61 @@
 
 #ifdef PGL_MOBILE
 #include <dirent.h>  /* For directory listing in debug code */
+#include <unistd.h>  /* For unlink, rmdir */
+
+/**
+ * Recursively remove a directory and all its contents.
+ * Returns 0 on success, -1 on failure.
+ */
+static int pgl_remove_directory_recursive(const char *path)
+{
+    DIR *dir = opendir(path);
+    if (!dir) {
+        /* If it doesn't exist, that's success */
+        if (errno == ENOENT) return 0;
+        return -1;
+    }
+
+    struct dirent *entry;
+    char child_path[2048];
+    int result = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        /* Skip . and .. */
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        snprintf(child_path, sizeof(child_path), "%s/%s", path, entry->d_name);
+
+        struct stat st;
+        if (lstat(child_path, &st) == -1) {
+            result = -1;
+            continue;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+            /* Recursively remove subdirectory */
+            if (pgl_remove_directory_recursive(child_path) == -1) {
+                result = -1;
+            }
+        } else {
+            /* Remove file */
+            if (unlink(child_path) == -1) {
+                result = -1;
+            }
+        }
+    }
+
+    closedir(dir);
+
+    /* Remove the directory itself */
+    if (rmdir(path) == -1) {
+        result = -1;
+    }
+
+    return result;
+}
 #endif
 
 // ============================================================================
@@ -640,7 +695,7 @@ extern void pgl_mobile_force_link_extensions(void);
 extern void pgl_mobile_init_extensions(void);
 #endif
 
-__attribute__((export_name("pgl_backend"))) void pgl_backend()
+__attribute__((export_name("pgl_backend"))) int pgl_backend()
 {
     /* IMMEDIATE logging - before anything else */
     fprintf(stderr, "[pgl_backend] *** IMMEDIATE ENTRY - function called ***\n");
@@ -672,7 +727,7 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
     {
         PGL_LOG_INFO("[pgl_backend] Backend already initialized, skipping re-init");
         fprintf(stderr, "[pgl_backend] Backend already initialized in this process, skipping\n");
-        return;
+        return 0; /* Success - already initialized */
     }
     
     /*
@@ -871,7 +926,7 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
                 pgl_jmp_context = PGL_JMP_NONE;
                 PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during shmem init, returning");
                 fprintf(stderr, "[pgl_backend] proc_exit intercepted during shmem init, returning\n");
-                return; /* Return from pgl_backend - caller should handle the error */
+                return -1; /* Error - shmem init failed */
             }
 
             /* Read control file */
@@ -1013,7 +1068,7 @@ __attribute__((export_name("pgl_backend"))) void pgl_backend()
         pgl_jmp_context = PGL_JMP_NONE;
         PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during backend init, returning");
         fprintf(stderr, "[pgl_backend] proc_exit intercepted during backend init, returning\n");
-        return; /* Return from pgl_backend - caller should handle the error */
+        return -2; /* Error - backend init failed (proc_exit called) */
     }
     fprintf(stderr, "[pgl_backend] *** sigsetjmp returned 0, pgl_boot_jmp=%p, proceeding to AsyncPostgresSingleUserMain ***\n", (void*)pgl_boot_jmp);
 #endif
@@ -1102,6 +1157,7 @@ backend_started:;
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[pgl_backend] EXIT: function completing successfully");
 #endif
+    return 0; /* Success */
 }
 
 #if defined(__EMSCRIPTEN__)
@@ -1233,6 +1289,53 @@ int pgl_initdb()
         
         if (__has_pgversion && !__force_initdb)
         {
+#ifdef PGL_MOBILE
+            /*
+             * CRITICAL: Validate that pg_control exists and has correct size before
+             * attempting to use an existing database. A previous crash (e.g., during
+             * PostGIS initialization) could leave the database in a corrupt state
+             * where PG_VERSION exists but pg_control is missing or invalid.
+             *
+             * If pg_control is invalid, we MUST delete the corrupt database and
+             * reinitialize, otherwise ReadControlFile() will PANIC and crash the app.
+             *
+             * See: docs/issues/pglite-ios-postgis-crash.md
+             */
+            struct stat ctrl_stat;
+            int has_valid_control = 0;
+
+            if (stat("global/pg_control", &ctrl_stat) == 0) {
+                /* PG_CONTROL_FILE_SIZE is 8192 bytes */
+                if (ctrl_stat.st_size >= 8192) {
+                    has_valid_control = 1;
+                    PGL_LOG_INFO("[pgl_initdb] pg_control valid: size=%lld", (long long)ctrl_stat.st_size);
+                } else {
+                    PGL_LOG_ERROR("[pgl_initdb] pg_control CORRUPT: size=%lld (expected >= 8192)", (long long)ctrl_stat.st_size);
+                }
+            } else {
+                PGL_LOG_ERROR("[pgl_initdb] pg_control MISSING at global/pg_control - database is corrupt");
+            }
+
+            if (!has_valid_control) {
+                /* Database is corrupt - must delete and reinitialize */
+                PGL_LOG_ERROR("[pgl_initdb] *** CORRUPT DATABASE DETECTED - REMOVING AND REINITIALIZING ***");
+                fprintf(stderr, "[pgl_initdb] Removing corrupt database at %s\n", (const char *)PGDATA);
+
+                chdir("/");  /* Must exit PGDATA before removing it */
+
+                int rm_result = pgl_remove_directory_recursive((const char *)PGDATA);
+                if (rm_result == 0) {
+                    PGL_LOG_INFO("[pgl_initdb] Corrupt database removed successfully");
+                    fprintf(stderr, "[pgl_initdb] Corrupt database removed, will reinitialize\n");
+                } else {
+                    PGL_LOG_ERROR("[pgl_initdb] Failed to remove corrupt database (rc=%d)", rm_result);
+                    fprintf(stderr, "[pgl_initdb] WARNING: Failed to fully remove corrupt database\n");
+                }
+
+                /* Fall through to run initdb - do NOT goto initdb_done */
+                goto run_initdb;
+            }
+#endif
             chdir("/");
 
             pgl_idb_status |= IDB_HASDB;
@@ -1247,6 +1350,9 @@ int pgl_initdb()
             async_restart = 0;
             goto initdb_done;
         }
+#ifdef PGL_MOBILE
+run_initdb:
+#endif
         chdir("/");
         PGL_LOG_INFO("[pgl_initdb] No existing database found, will run initdb");
 #if PGDEBUG
