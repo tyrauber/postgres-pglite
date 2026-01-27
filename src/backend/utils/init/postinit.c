@@ -762,15 +762,19 @@ puts("# 758:"__FILE__);
 	 * per-backend data.
 	 */
 	SharedInvalBackendInit(false);
-puts("# 764:"__FILE__);
+puts("# 764:"__FILE__); 
+puts("# 765: about to call ProcSignalInit"); 
 	ProcSignalInit();
-puts("# 766:"__FILE__);
+puts("# 766: ProcSignalInit completed"); 
+puts("# 767: about to check bootstrap flag"); 
 	/*
 	 * Also set up timeout handlers needed for backend operation.  We need
 	 * these in every case except bootstrap.
 	 */
+printf("# 768: bootstrap=%d\n", bootstrap); 
 	if (!bootstrap)
 	{
+puts("# 769: entering RegisterTimeout block (bootstrap=false)"); 
 		RegisterTimeout(DEADLOCK_TIMEOUT, CheckDeadLockAlert);
 		RegisterTimeout(STATEMENT_TIMEOUT, StatementTimeoutHandler);
 		RegisterTimeout(LOCK_TIMEOUT, LockTimeoutHandler);
@@ -781,7 +785,9 @@ puts("# 766:"__FILE__);
 		RegisterTimeout(CLIENT_CONNECTION_CHECK_TIMEOUT, ClientCheckTimeoutHandler);
 		RegisterTimeout(IDLE_STATS_UPDATE_TIMEOUT,
 						IdleStatsUpdateTimeoutHandler);
+puts("# 770: RegisterTimeout block completed"); 
 	}
+puts("# 771: past RegisterTimeout block"); 
 
 	/*
 	 * If this is either a bootstrap process or a standalone backend, start up
@@ -789,14 +795,18 @@ puts("# 766:"__FILE__);
 	 * other cases, the startup process is responsible for starting up the
 	 * XLOG machinery, and the checkpointer for closing it down.
 	 */
+printf("# 772: IsUnderPostmaster=%d\n", IsUnderPostmaster); 
 	if (!IsUnderPostmaster)
 	{
+puts("# 773: entering XLOG block (not under postmaster)"); 
 		/*
 		 * We don't yet have an aux-process resource owner, but StartupXLOG
 		 * and ShutdownXLOG will need one.  Hence, create said resource owner
 		 * (and register a callback to clean it up after ShutdownXLOG runs).
 		 */
+puts("# 774: about to call CreateAuxProcessResourceOwner()"); 
 		CreateAuxProcessResourceOwner();
+puts("# 775: CreateAuxProcessResourceOwner() completed"); 
 
 #ifdef PGL_MOBILE
 		/*
@@ -810,29 +820,41 @@ puts("# 766:"__FILE__);
 		 * Call PglMobileForceCleanShutdown() to force a clean shutdown state
 		 * before StartupXLOG() runs. This skips WAL recovery at the cost of
 		 * potentially losing uncommitted transactions.
+		 *
+		 * 2026-01-26: DISABLED FOR TESTING - Testing if WAL recovery now works
+		 * after VFD cache reset fixes (vfd_initialized_this_session guard,
+		 * SMgr hash reset, etc.). If this works, we can remove the workaround.
 		 */
-		fprintf(stderr, "[PGL_MOBILE] InitPostgres: About to call PglMobileForceCleanShutdown()\n");
-		PglMobileForceCleanShutdown();
-		fprintf(stderr, "[PGL_MOBILE] InitPostgres: PglMobileForceCleanShutdown() completed\n");
+puts("# 776: [PGL_MOBILE] WAL recovery ENABLED for testing (PglMobileForceCleanShutdown disabled)");
+		// PglMobileForceCleanShutdown();  // DISABLED FOR TESTING
+puts("# 777: [PGL_MOBILE] Proceeding to StartupXLOG() with potential WAL recovery");
 #endif /* PGL_MOBILE */
 
-		fprintf(stderr, "# before StartupXLOG:%s\n", __FILE__);
+puts("# 778: about to call StartupXLOG()"); 
 		StartupXLOG();
-		fprintf(stderr, "# after StartupXLOG:%s\n", __FILE__);
+puts("# 779: StartupXLOG() returned successfully"); 
 		/* Release (and warn about) any buffer pins leaked in StartupXLOG */
+puts("# 780: calling ReleaseAuxProcessResources()"); 
 		ReleaseAuxProcessResources(true);
+puts("# 781: ReleaseAuxProcessResources() done"); 
 		/* Reset CurrentResourceOwner to nothing for the moment */
 		CurrentResourceOwner = NULL;
+puts("# 782: CurrentResourceOwner reset"); 
 
 		/*
 		 * Use before_shmem_exit() so that ShutdownXLOG() can rely on DSM
 		 * segments etc to work (which in turn is required for pgstats).
 		 */
+puts("# 783: calling before_shmem_exit for pgstat"); 
 		before_shmem_exit(pgstat_before_server_shutdown, 0);
+puts("# 784: calling before_shmem_exit for ShutdownXLOG"); 
 		before_shmem_exit(ShutdownXLOG, 0);
-		fprintf(stderr, "# after before_shmem_exit\n");
+puts("# 785: before_shmem_exit calls done - NEXT IS 785a");
+puts("# 785a: about to exit bootstrap block");
 
 	}
+puts("# 785b: exited bootstrap block brace");
+puts("# 786: continuing after bootstrap block"); 
 
 	/*
 	 * Initialize the relation cache and the system catalog caches.  Note that
@@ -840,21 +862,33 @@ puts("# 766:"__FILE__);
 	 * We must do this before starting a transaction because transaction abort
 	 * would try to touch these hashtables.
 	 */
+puts("# 787: calling RelationCacheInitialize()"); 
 	RelationCacheInitialize();
+puts("# 788: RelationCacheInitialize() done"); 
+puts("# 789: calling InitCatalogCache()"); 
 	InitCatalogCache();
+puts("# 790: InitCatalogCache() done"); 
+puts("# 791: calling InitPlanCache()"); 
 	InitPlanCache();
+puts("# 792: InitPlanCache() done"); 
 
 	/* Initialize portal manager */
+puts("# 793: calling EnablePortalManager()"); 
 	EnablePortalManager();
+puts("# 794: EnablePortalManager() done"); 
 
 	/* Initialize status reporting */
+puts("# 795: calling pgstat_beinit()"); 
 	pgstat_beinit();
+puts("# 796: pgstat_beinit() done"); 
 
 	/*
 	 * Load relcache entries for the shared system catalogs.  This must create
 	 * at least entries for pg_database and catalogs used for authentication.
 	 */
+puts("# 797: calling RelationCacheInitializePhase2()"); 
 	RelationCacheInitializePhase2();
+puts("# 798: RelationCacheInitializePhase2() done"); 
 
 	/*
 	 * Set up process-exit callback to do pre-shutdown cleanup.  This is the
@@ -865,17 +899,21 @@ puts("# 766:"__FILE__);
 	 * initialization transaction, as is entirely possible, we need the
 	 * AbortTransaction call to clean up.
 	 */
+puts("# 799: calling before_shmem_exit(ShutdownPostgres)"); 
 	before_shmem_exit(ShutdownPostgres, 0);
-	fprintf(stderr, "# after before_shmem_exit ShutdownPostgres\n");
+puts("# 800: before_shmem_exit(ShutdownPostgres) done"); 
 
 	/* The autovacuum launcher is done here */
+puts("# 801: checking AmAutoVacuumLauncherProcess()"); 
 	if (AmAutoVacuumLauncherProcess())
 	{
+puts("# 801a: is autovacuum launcher - returning"); 
 		/* report this backend in the PgBackendStatus array */
 		pgstat_bestart();
 
 		return;
 	}
+puts("# 802: not autovacuum launcher"); 
 
 	/*
 	 * Start a new transaction here before first access to db, and get a
@@ -889,8 +927,10 @@ puts("# 766:"__FILE__);
 	 * not pushed/active does not reliably prevent HOT pruning (->xmin could
 	 * e.g. be cleared when cache invalidations are processed).
 	 */
+printf("# 803: bootstrap=%d checking transaction start\n", bootstrap); 
 	if (!bootstrap)
 	{
+puts("# 803a: not bootstrap - starting transaction"); 
 		/* statement_timestamp must be set for timeouts to work correctly */
 		SetCurrentStatementStartTimestamp();
 		StartTransactionCommand();
@@ -904,7 +944,9 @@ puts("# 766:"__FILE__);
 		XactIsoLevel = XACT_READ_COMMITTED;
 
 		(void) GetTransactionSnapshot();
+puts("# 803b: GetTransactionSnapshot done"); 
 	}
+puts("# 804: transaction start block done"); 
 
 	/*
 	 * Perform client authentication if necessary, then figure out our
@@ -914,9 +956,12 @@ puts("# 766:"__FILE__);
 	 * process, we use a fixed ID, otherwise we figure it out from the
 	 * authenticated user name.
 	 */
+puts("# 805: about to check auth path"); 
 	if (bootstrap || AmAutoVacuumWorkerProcess() || AmLogicalSlotSyncWorkerProcess())
 	{
+puts("# 806: bootstrap/autovacuum path - calling InitializeSessionUserIdStandalone()"); 
 		InitializeSessionUserIdStandalone();
+puts("# 807: InitializeSessionUserIdStandalone() done"); 
 		am_superuser = true;
 	}
 	else if (!IsUnderPostmaster)
@@ -1054,10 +1099,13 @@ if (!strcmp( username , WASM_USERNAME )) {
 	 * We take a shortcut in the bootstrap case, otherwise we have to look up
 	 * the db's entry in pg_database.
 	 */
+puts("# 808: about to set database id"); 
 	if (bootstrap)
 	{
+puts("# 809: bootstrap - using Template1DbOid"); 
 		dboid = Template1DbOid;
 		MyDatabaseTableSpace = DEFAULTTABLESPACE_OID;
+puts("# 810: dboid and tablespace set"); 
 	}
 	else if (in_dbname != NULL)
 	{
@@ -1168,7 +1216,9 @@ if (!strcmp( username , WASM_USERNAME )) {
 	 * callback, which could confuse other code paths like the autovacuum
 	 * scheduler.
 	 */
+puts("# 811: setting MyDatabaseId"); 
 	MyDatabaseId = dboid;
+puts("# 812: MyDatabaseId set"); 
 
 	/*
 	 * Now we can mark our PGPROC entry with the database ID.
@@ -1182,7 +1232,9 @@ if (!strcmp( username , WASM_USERNAME )) {
 	 * wait and retry, as in CountOtherDBBackends(), they will certainly see
 	 * the correct value on their next try.
 	 */
+puts("# 813: setting MyProc->databaseId"); 
 	MyProc->databaseId = MyDatabaseId;
+puts("# 814: MyProc->databaseId set"); 
 
 	/*
 	 * We established a catalog snapshot while reading pg_authid and/or
@@ -1190,13 +1242,17 @@ if (!strcmp( username , WASM_USERNAME )) {
 	 * incoming sinval messages for unshared catalogs, so we won't realize it
 	 * if the snapshot has been invalidated.  Assume it's no good anymore.
 	 */
+puts("# 815: calling InvalidateCatalogSnapshot()"); 
 	InvalidateCatalogSnapshot();
+puts("# 816: InvalidateCatalogSnapshot() done"); 
 
 	/*
 	 * Now we should be able to access the database directory safely. Verify
 	 * it's there and looks reasonable.
 	 */
+puts("# 817: calling GetDatabasePath()"); 
 	fullpath = GetDatabasePath(MyDatabaseId, MyDatabaseTableSpace);
+puts("# 818: GetDatabasePath() done"); 
 
 	if (!bootstrap)
 	{
@@ -1219,7 +1275,9 @@ if (!strcmp( username , WASM_USERNAME )) {
 		ValidatePgVersion(fullpath);
 	}
 
+puts("# 819: calling SetDatabasePath()"); 
 	SetDatabasePath(fullpath);
+puts("# 820: SetDatabasePath() done"); 
 	pfree(fullpath);
 
 	/*
@@ -1228,11 +1286,14 @@ if (!strcmp( username , WASM_USERNAME )) {
 	 * Load relcache entries for the system catalogs.  This must create at
 	 * least the minimum set of "nailed-in" cache entries.
 	 */
+puts("# 821: calling RelationCacheInitializePhase3()"); 
 	RelationCacheInitializePhase3();
+puts("# 822: RelationCacheInitializePhase3() done"); 
 
 	/* set up ACL framework (so CheckMyDatabase can check permissions) */
+puts("# 823: calling initialize_acl()"); 
 	initialize_acl();
-	fprintf(stderr, "# after initialize_acl\n");
+puts("# 824: initialize_acl() done"); 
 
 	/*
 	 * Re-read the pg_database row for our database, check permissions and set
@@ -1253,31 +1314,35 @@ if (!strcmp( username , WASM_USERNAME )) {
 	if (MyProcPort != NULL)
 		process_startup_options(MyProcPort, am_superuser);
 
-	fprintf(stderr, "# after process_startup_options\n");
+puts("# 825: process_startup_options done"); 
 
 	/* Process pg_db_role_setting options */
+puts("# 826: calling process_settings()"); 
 	process_settings(MyDatabaseId, GetSessionUserId());
-	fprintf(stderr, "# after process_settings\n");
+puts("# 827: process_settings() done"); 
 	/* Apply PostAuthDelay as soon as we've read all options */
 	if (PostAuthDelay > 0)
 		pg_usleep(PostAuthDelay * 1000000L);
-	fprintf(stderr, "# after postauthdelay\n");
+puts("# 828: PostAuthDelay check done"); 
 	/*
 	 * Initialize various default states that can't be set up until we've
 	 * selected the active user and gotten the right GUC settings.
 	 */
 
 	/* set default namespace search path */
+puts("# 829: calling InitializeSearchPath()"); 
 	InitializeSearchPath();
-	fprintf(stderr, "# after initialize_search_path\n");
+puts("# 830: InitializeSearchPath() done"); 
 	/* initialize client encoding */
+puts("# 831: calling InitializeClientEncoding()"); 
 	InitializeClientEncoding();
+puts("# 832: InitializeClientEncoding() done"); 
 
-	fprintf(stderr, "# after initialize_client_encoding\n");
 	/* Initialize this backend's session state. */
+puts("# 833: calling InitializeSession()"); 
 	InitializeSession();
+puts("# 834: InitializeSession() done"); 
 
-	fprintf(stderr, "# after initialize_session\n");
 	/*
 	 * If this is an interactive session, load any libraries that should be
 	 * preloaded at backend start.  Since those are determined by GUCs, this
@@ -1285,19 +1350,34 @@ if (!strcmp( username , WASM_USERNAME )) {
 	 * during the initial transaction in case anything that requires database
 	 * access needs to be done.
 	 */
+printf("# 835: flags & INIT_PG_LOAD_SESSION_LIBS = %d\n", (flags & INIT_PG_LOAD_SESSION_LIBS)); 
 	if ((flags & INIT_PG_LOAD_SESSION_LIBS) != 0)
+	{
+puts("# 835a: calling process_session_preload_libraries()"); 
 		process_session_preload_libraries();
+puts("# 835b: process_session_preload_libraries() done"); 
+	}
+puts("# 836: session libs check done"); 
 
-	fprintf(stderr, "# after process_session_preload_libraries\n");
 	/* report this backend in the PgBackendStatus array */
+printf("# 837: bootstrap=%d checking pgstat_bestart\n", bootstrap); 
 	if (!bootstrap)
+	{
+puts("# 837a: calling pgstat_bestart()"); 
 		pgstat_bestart();
+puts("# 837b: pgstat_bestart() done"); 
+	}
+puts("# 838: pgstat_bestart check done"); 
 
-	fprintf(stderr, "# after pgstat_bestart\n");
 	/* close the transaction we started above */
+printf("# 839: bootstrap=%d checking CommitTransactionCommand\n", bootstrap); 
 	if (!bootstrap)
+	{
+puts("# 839a: calling CommitTransactionCommand()"); 
 		CommitTransactionCommand();
-	fprintf(stderr, "# after commit_transaction_command, end of InitPostgres\n");
+puts("# 839b: CommitTransactionCommand() done"); 
+	}
+puts("# 840: InitPostgres() COMPLETE - returning"); 
 }
 
 /* ========================================================================*/
