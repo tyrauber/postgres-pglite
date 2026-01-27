@@ -1136,6 +1136,122 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
 
     fprintf(stderr, "[pgl_backend] B039: Taking existing database path (async_restart=0)\n");
     fflush(stderr);
+
+#ifdef PGL_MOBILE
+    /*
+     * MOBILE/DAEMON FIX: For existing databases (async_restart=0), use the same
+     * cold-start initialization path as fresh databases. The old path through
+     * main_post() + AsyncPostgresSingleUserMain is fragile — SelectConfigFiles,
+     * CreateDataDirLockFile, etc. can call proc_exit() which triggers longjmp
+     * and returns -2. The cold-start init path (PgStartTime==0 block) was
+     * designed for the daemon use case and handles errors gracefully.
+     */
+    fprintf(stderr, "[pgl_backend] B039a: PGL_MOBILE existing DB — using cold-start init path\n");
+    fflush(stderr);
+    PGL_LOG_INFO("[pgl_backend] Existing DB on mobile/daemon — using cold-start init");
+
+    /* Set up longjmp guard for proc_exit during initialization */
+    pgl_boot_jmp = &pgl_shmem_jmp_buf;
+    pgl_jmp_context = PGL_JMP_SHMEM;
+    if (sigsetjmp(pgl_shmem_jmp_buf, 1) != 0)
+    {
+        pgl_boot_jmp = NULL;
+        pgl_jmp_context = PGL_JMP_NONE;
+        PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during existing DB init");
+        fprintf(stderr, "[pgl_backend] proc_exit intercepted during existing DB init\n");
+        return -2;
+    }
+
+    /* Step 1: Memory context */
+    if (TopMemoryContext == NULL)
+        MemoryContextInit();
+    else
+        CurrentMemoryContext = TopMemoryContext;
+
+    /* Step 2: Standalone process (latches, signals) */
+    {
+        const char *pr = (PREFIX && ((const char *)PREFIX)[0]) ? (const char *)PREFIX : WASM_PREFIX;
+        char argv0_buf[256];
+        snprintf(argv0_buf, sizeof(argv0_buf), "%s/bin/postgres", pr);
+        InitStandaloneProcess(argv0_buf);
+    }
+
+    /* Step 3: GUC options */
+    InitializeGUCOptions();
+
+    /* Step 4: Set DataDir */
+    SetDataDir((const char *)PGDATA);
+    if (chdir(PGDATA) != 0)
+        fprintf(stderr, "[pgl_backend] WARNING: chdir(%s) failed errno=%d\n", PGDATA, errno);
+
+    /* Step 5: Config files */
+    if (!SelectConfigFiles(NULL, "postgres"))
+        fprintf(stderr, "[pgl_backend] WARNING: SelectConfigFiles failed, continuing\n");
+
+    /* Step 6: Control file */
+    LocalProcessControlFile(false);
+
+    /* Step 7: Preload libraries */
+    process_shared_preload_libraries();
+
+    /* Step 8: MaxBackends */
+    InitializeMaxBackends();
+
+    /* Step 9: Shared memory requests */
+    process_shmem_requests();
+
+    /* Step 10: Shmem GUCs */
+    InitializeShmemGUCs();
+
+    /* Step 11: WAL consistency */
+    InitializeWalConsistencyChecking();
+
+    /* Step 12: Shared memory */
+    CreateSharedMemoryAndSemaphores();
+
+    /* Step 13: Startup time */
+    PgStartTime = GetCurrentTimestamp();
+
+    /* Step 14: Process struct */
+    InitProcess();
+
+    /* Step 15: Processing mode */
+    SetProcessingMode(InitProcessing);
+
+    /* Step 16: Base init (smgr, buffers, VFD) */
+    BaseInit();
+
+    /* Step 17: Timeouts */
+    InitializeTimeouts();
+
+    /* Step 18: Unblock signals */
+    {
+        extern sigset_t UnBlockSig;
+        sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+    }
+
+    /* Step 19: InitPostgres */
+    {
+        const char *dbname = "template1";
+        const char *username = getenv("PGUSER");
+        if (!username) username = "postgres";
+        InitPostgres(dbname, InvalidOid, username, InvalidOid,
+                     INIT_PG_LOAD_SESSION_LIBS, NULL);
+    }
+
+    /* Step 20: Normal processing */
+    SetProcessingMode(NormalProcessing);
+
+    /* Clear jump buffer */
+    pgl_boot_jmp = NULL;
+    pgl_jmp_context = PGL_JMP_NONE;
+    PGL_LOG_INFO("[pgl_backend] Existing DB cold-start init complete");
+    fprintf(stderr, "[pgl_backend] B039b: Existing DB cold-start init complete\n");
+    fflush(stderr);
+
+    goto backend_started;
+#endif /* PGL_MOBILE */
+
     PGL_LOG_ERROR("[pgl_backend] *** About to enter main_post() for existing database ***");
     fprintf(stderr, "[pgl_main] entering main_post (before single-user resume) g_argv=%p g_argv0=%s DataDir=%s\n",
             (void *)g_argv,
