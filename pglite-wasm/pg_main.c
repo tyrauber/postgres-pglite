@@ -392,6 +392,7 @@ extern int BootstrapModeMain(int, char **, int);
 // PostgresSingleUserMain / PostgresMain
 
 #include "miscadmin.h"
+#include "utils/timeout.h"
 #include "access/xlog.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
@@ -1065,18 +1066,66 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             fprintf(stderr, "[pgl_backend] B035: SetProcessingMode done\n");
             fflush(stderr);
 
-            /* Early initialization */
+            /* Early initialization - sets up smgr, buffer pool, VFD */
             fprintf(stderr, "[pgl_backend] B036: Calling BaseInit()\n");
             fflush(stderr);
             BaseInit();
             fprintf(stderr, "[pgl_backend] B037: BaseInit() done\n");
             fflush(stderr);
 
+            /* Initialize timeout infrastructure - MUST be before InitPostgres
+             * which calls RegisterTimeout for deadlock, statement, lock timeouts */
+            fprintf(stderr, "[pgl_backend] B037a1: Calling InitializeTimeouts()\n");
+            fflush(stderr);
+            InitializeTimeouts();
+            fprintf(stderr, "[pgl_backend] B037a2: InitializeTimeouts() done\n");
+            fflush(stderr);
+
+            /* Unblock signals - InitPostgres needs SIGALRM for timeouts */
+            fprintf(stderr, "[pgl_backend] B037a: Unblocking signals\n");
+            fflush(stderr);
+            {
+                extern sigset_t UnBlockSig;
+                sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+            }
+
+            /* Initialize the database - this is the big one.
+             * InitPostgres sets up:
+             *   - ProcArray (InitProcessPhase2)
+             *   - Shared invalidation (SharedInvalBackendInit)
+             *   - Signal handling (ProcSignalInit)
+             *   - Timeouts (RegisterTimeout)
+             *   - WAL / XLOG (StartupXLOG - WAL recovery happens here!)
+             *   - Relation cache (RelationCacheInitialize)
+             *   - Catalog cache (InitCatalogCache)
+             *   - Plan cache (InitPlanCache)
+             *   - Portal manager (EnablePortalManager)
+             *   - Transaction system
+             *   - Session user
+             * Without this, DDL (CREATE TABLE etc.) will crash in hash_search
+             * because catalog/relcache hash tables don't exist. */
+            fprintf(stderr, "[pgl_backend] B037b: Calling InitPostgres()\n");
+            fflush(stderr);
+            {
+                const char *dbname = "template1";
+                const char *username = getenv("PGUSER");
+                if (!username) username = "postgres";
+                InitPostgres(dbname, InvalidOid, username, InvalidOid,
+                             INIT_PG_LOAD_SESSION_LIBS, NULL);
+            }
+            fprintf(stderr, "[pgl_backend] B037c: InitPostgres() done\n");
+            fflush(stderr);
+
+            /* Switch to normal processing mode */
+            SetProcessingMode(NormalProcessing);
+            fprintf(stderr, "[pgl_backend] B037d: NormalProcessing mode set\n");
+            fflush(stderr);
+
             /* Clear jump buffer after successful init */
             pgl_boot_jmp = NULL;
             pgl_jmp_context = PGL_JMP_NONE;
-            PGL_LOG_INFO("[pgl_backend] Shared memory initialization complete");
-            fprintf(stderr, "[pgl_backend] Shared memory initialization complete\n");
+            PGL_LOG_INFO("[pgl_backend] Full backend initialization complete (shmem + catalogs)");
+            fprintf(stderr, "[pgl_backend] Full backend initialization complete\n");
         }
 #endif
 
