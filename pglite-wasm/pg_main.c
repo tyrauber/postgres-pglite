@@ -1989,20 +1989,15 @@ run_initdb:
 #endif
 
 #if defined(__ANDROID__) || defined(PGL_MOBILE)
-        // close the file stream, then restore the original FD 0 and stdin
-        fprintf(stderr, "[pgl_main] about to fclose(stdin)\n");
-        PGL_LOG_INFO("%s", "[pgl_main] About to close stdin stream");
-        fclose(stdin);
-        fprintf(stderr, "[pgl_main] fclose(stdin) completed\n");
-        PGL_LOG_INFO("%s", "[pgl_main] stdin stream closed successfully");
-        /* On mobile/embedded (PGL_MOBILE), we used /dev/null as saved_stdin, so just reopen /dev/null for stdin */
-        fprintf(stderr, "[pgl_main] PGL_MOBILE: reopening /dev/null for stdin\n");
-        PGL_LOG_INFO("%s", "[pgl_main] Reopening /dev/null for stdin");
-        stdin = fopen("/dev/null", "r");
-        if (!stdin)
+        // Restore stdin to /dev/null. Use freopen() which works on all libc
+        // implementations (glibc, musl, bionic). Direct assignment to stdin
+        // (stdin = fopen(...)) crashes on musl where stdin is a macro/constant.
+        fprintf(stderr, "[pgl_main] PGL_MOBILE: freopen /dev/null for stdin\n");
+        PGL_LOG_INFO("%s", "[pgl_main] Reopening /dev/null for stdin via freopen");
+        if (!freopen("/dev/null", "r", stdin))
         {
-            fprintf(stderr, "[pgl_main] fopen(/dev/null) for stdin failed errno=%d\n", errno);
-            PGL_LOG_ERROR("[pgl_main] fopen(/dev/null) for stdin failed errno=%d", errno);
+            fprintf(stderr, "[pgl_main] freopen(/dev/null, stdin) failed errno=%d\n", errno);
+            PGL_LOG_ERROR("[pgl_main] freopen(/dev/null, stdin) failed errno=%d", errno);
         }
         else
         {
