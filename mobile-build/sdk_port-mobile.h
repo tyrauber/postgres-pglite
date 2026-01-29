@@ -26,6 +26,12 @@ void pgl_reset_wire_session(void);
 // See pgl_io_hooks.h for the full type definitions.
 #include "pgl_io_hooks.h"
 
+// SMgr-level storage hooks for relation-aware callbacks (write, sync, checkpoint).
+// Fires after md.c operations succeed — provides semantic context (which table/index
+// changed, which fork, which blocks) for S3 upload or dirty-relation tracking.
+// See pgl_smgr_hooks.h for the full type definitions.
+#include "pgl_smgr_hooks.h"
+
 // WAL archive callback - called when a WAL segment is ready to archive.
 // In embedded/library mode, PostgreSQL's archiver process can't run (no fork),
 // so this callback replaces archive_command for pushing WAL segments to S3, etc.

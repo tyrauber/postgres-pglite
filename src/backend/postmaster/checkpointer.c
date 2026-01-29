@@ -947,7 +947,7 @@ RequestCheckpoint(int flags)
 	/*
 	 * If in a standalone backend, just do it ourselves.
 	 */
-#if !defined(__wasi__) && !defined(__EMSCRIPTEN__)
+#if !defined(__wasi__) && !defined(__EMSCRIPTEN__) && !defined(PGL_MOBILE)
 	if (!IsPostmasterEnvironment)
 #endif
 	{
@@ -956,6 +956,14 @@ RequestCheckpoint(int flags)
 		 * because there's no other backends the checkpoint could disrupt.
 		 */
 		CreateCheckPoint(flags | CHECKPOINT_IMMEDIATE);
+
+#ifdef PGL_MOBILE
+		/* Notify external code (S3 upload, etc.) that checkpoint is complete */
+		{
+			extern void pgl_smgr_notify_checkpoint(void);
+			pgl_smgr_notify_checkpoint();
+		}
+#endif
 
 		/* Free all smgr objects, as CheckpointerMain() normally would. */
 		smgrdestroyall();
