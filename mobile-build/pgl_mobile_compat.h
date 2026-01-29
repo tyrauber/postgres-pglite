@@ -73,3 +73,6 @@ extern int optreset;  // Defined in pgl_mobile_shims.c
 /* Note: On native builds, WASM export_name attributes are ignored.
    Provide any symbol name shims in a separate TU (pgl_mobile_shims.c)
    rather than using GCC alias attributes here. */
+
+/* I/O hook redirects are now in port.h (PGL_MOBILE guard).
+ * See pgl_io_hooks.h for the callback registration API. */

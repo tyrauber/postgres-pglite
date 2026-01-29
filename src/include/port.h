@@ -223,8 +223,17 @@ extern int	pg_printf(const char *fmt,...) pg_attribute_printf(1, 2);
  * We add a pg_ prefix as a warning that the Windows implementations have the
  * non-standard side-effect of changing the current file position.
  */
+#ifdef PGL_MOBILE
+/* On mobile/daemon builds, redirect through hookable functions so external
+ * code (e.g. Go via cgo) can intercept all file I/O for custom storage. */
+extern ssize_t pgl_hooked_pread(int fd, void *buf, size_t count, off_t offset);
+extern ssize_t pgl_hooked_pwrite(int fd, const void *buf, size_t count, off_t offset);
+#define pg_pread  pgl_hooked_pread
+#define pg_pwrite pgl_hooked_pwrite
+#else
 #define pg_pread pread
 #define pg_pwrite pwrite
+#endif
 #endif
 
 /*
