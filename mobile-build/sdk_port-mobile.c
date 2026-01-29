@@ -78,12 +78,93 @@ void use_wire(int state) {
   is_wire = (state > 0);
   extern volatile bool is_repl;
   is_repl = !is_wire;
-  
+
   /* When switching to REPL mode, clear request size to avoid confusion */
   if (!is_wire) {
     original_request_size = 0;
     pgl_mobile_cma_wsize = 0;
     PGL_LOG_INFO("use_wire: switched to REPL mode, cleared request sizes");
   }
+}
+
+/* External variable defined in interactive_one.c (included via pg_main.c) */
+extern bool mobile_auth_started;
+
+/*
+ * Skip startup auth for TCP servers that handle auth externally.
+ * This sets mobile_auth_started=true so interactive_one() won't call startup_auth()
+ * on the first query message. Must be called after pgl_backend() and use_wire(1).
+ */
+void pgl_skip_auth(void) {
+  mobile_auth_started = true;
+  PGL_LOG_INFO("pgl_skip_auth: mobile_auth_started set to true");
+}
+
+/*
+ * Reset wire protocol session state for new client connections.
+ *
+ * When a client disconnects and a new one connects, call this function to
+ * reset all wire protocol state so the new client can start fresh with
+ * proper authentication flow.
+ *
+ * This resets:
+ * - mobile_auth_started flag (so auth happens for new client)
+ * - CMA buffer sizes (cma_rsize, pgl_mobile_cma_wsize)
+ * - PostgreSQL receive/send buffer pointers
+ * - Channel state
+ * - mobile send buffer (original_request_size)
+ *
+ * Usage in pglite-daemon:
+ *   // When client disconnects:
+ *   pgl_reset_wire_session();
+ *   // Now ready for new client connection
+ */
+/* --- WAL Archive Callback --- */
+
+/* Global callback pointer defined in xlogarchive.c, NULL means no archive callback registered */
+extern pgl_archive_callback_t pgl_archive_callback_fn;
+
+void pgl_set_archive_callback(pgl_archive_callback_t callback) {
+  pgl_archive_callback_fn = callback;
+  PGL_LOG_INFO("pgl_set_archive_callback: %s", callback ? "registered" : "cleared");
+}
+
+/*
+ * Mark a WAL segment as successfully archived.
+ * Must be called by the archive callback after uploading to S3/etc.
+ * This renames {segment}.ready -> {segment}.done so PostgreSQL can recycle it.
+ */
+void pgl_archive_done(const char *segment_name) {
+  /* Implemented via XLogArchiveForceDone in xlogarchive.c.
+   * We call it through a function pointer set during PostgreSQL init,
+   * since we can't include PostgreSQL headers here. */
+  extern void XLogArchiveForceDone(const char *);
+  XLogArchiveForceDone(segment_name);
+  PGL_LOG_INFO("pgl_archive_done: marked %s as done", segment_name);
+}
+
+/* --- Wire Session Reset --- */
+
+void pgl_reset_wire_session(void) {
+  PGL_LOG_INFO("pgl_reset_wire_session: resetting wire protocol state for new connection");
+
+  /* Reset auth flag so new client goes through auth flow */
+  mobile_auth_started = false;
+
+  /* Reset CMA buffer state */
+  cma_rsize = 0;
+  pgl_mobile_cma_wsize = 0;
+  channel = 0;
+
+  /* Reset PostgreSQL buffer state (receive + send buffers) */
+  extern void pq_reset_session_state(void);
+  pq_reset_session_state();
+
+  /* Reset mobile comm original_request_size */
+  extern int original_request_size;
+  original_request_size = 0;
+
+  PGL_LOG_INFO("pgl_reset_wire_session: reset complete - mobile_auth_started=%d cma_rsize=%d cma_wsize=%d",
+               mobile_auth_started, cma_rsize, pgl_mobile_cma_wsize);
 }
 

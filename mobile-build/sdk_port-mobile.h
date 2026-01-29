@@ -26,6 +26,21 @@ void pgl_reset_wire_session(void);
 // See pgl_io_hooks.h for the full type definitions.
 #include "pgl_io_hooks.h"
 
+// WAL archive callback - called when a WAL segment is ready to archive.
+// In embedded/library mode, PostgreSQL's archiver process can't run (no fork),
+// so this callback replaces archive_command for pushing WAL segments to S3, etc.
+//
+// Parameters:
+//   segment_path - full path to the WAL segment file (e.g. "/tmp/pglite/base/pg_wal/000000010000000000000001")
+//   segment_name - basename only (e.g. "000000010000000000000001")
+//
+// After successfully archiving, the callback MUST call pgl_archive_done(segment_name)
+// so PostgreSQL can recycle the WAL segment.
+typedef void (*pgl_archive_callback_t)(const char *segment_path, const char *segment_name);
+
+void pgl_set_archive_callback(pgl_archive_callback_t callback);
+void pgl_archive_done(const char *segment_name);
+
 // Expose variables similar to wasm build  
 extern volatile int pgl_mobile_cma_wsize;  // External variable defined in pqcomm.c
 extern volatile int cma_rsize;

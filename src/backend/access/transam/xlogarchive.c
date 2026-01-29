@@ -41,6 +41,14 @@
 #endif
 #endif
 
+#ifdef PGL_MOBILE
+/*
+ * WAL archive callback for embedded/library mode.
+ * Set via pgl_set_archive_callback() from sdk_port-mobile.c.
+ */
+void (*pgl_archive_callback_fn)(const char *, const char *) = NULL;
+#endif
+
 /*
  * Attempt to retrieve the specified file from off-line archival storage.
  * If successful, fill "path" with its complete path (note that this will be
@@ -488,6 +496,24 @@ XLogArchiveNotify(const char *xlog)
 	 */
 	if (IsTLHistoryFileName(xlog))
 		PgArchForceDirScan();
+
+#ifdef PGL_MOBILE
+	/*
+	 * In embedded/library mode (pglite-daemon, mobile), the archiver process
+	 * can't run. Instead, invoke a registered callback so the host application
+	 * can archive WAL segments (e.g. upload to S3).
+	 */
+	{
+		extern void (*pgl_archive_callback_fn)(const char *, const char *);
+		if (pgl_archive_callback_fn != NULL)
+		{
+			char	full_path[MAXPGPATH];
+
+			snprintf(full_path, MAXPGPATH, XLOGDIR "/%s", xlog);
+			pgl_archive_callback_fn(full_path, xlog);
+		}
+	}
+#endif
 
 	/* Notify archiver that it's got something to do */
 	if (IsUnderPostmaster)
