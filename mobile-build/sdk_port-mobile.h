@@ -47,6 +47,15 @@ typedef void (*pgl_archive_callback_t)(const char *segment_path, const char *seg
 void pgl_set_archive_callback(pgl_archive_callback_t callback);
 void pgl_archive_done(const char *segment_name);
 
+// Enable WAL archiving mode. Must be called BEFORE pgl_backend().
+// Sets archive_mode=on so PostgreSQL invokes XLogArchiveNotify() when
+// WAL segments are ready, which triggers the registered archive callback.
+// Without this, XLogArchivingActive() returns false and the callback never fires.
+void pgl_enable_archiving(void);
+
+// Check if archiving was enabled (used internally by pgl_backend startup)
+extern volatile bool pgl_archiving_enabled;
+
 // Expose variables similar to wasm build  
 extern volatile int pgl_mobile_cma_wsize;  // External variable defined in pqcomm.c
 extern volatile int cma_rsize;

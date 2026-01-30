@@ -252,6 +252,7 @@ const char *progname;
 #ifdef PGL_MOBILE
 /* Mobile: defined in sdk_port-mobile.c */
 extern volatile bool is_repl;
+extern volatile bool pgl_archiving_enabled;
 #else
 /* WASM: define here */
 volatile bool is_repl = true;
@@ -1000,6 +1001,18 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             fprintf(stderr, "[pgl_backend] B017j: SelectConfigFiles() done\n");
             fflush(stderr);
 
+#ifdef PGL_MOBILE
+            /* Enable WAL archiving if requested via pgl_enable_archiving().
+             * archive_mode is PGC_POSTMASTER so it cannot be set via -c flag.
+             * Must be set AFTER SelectConfigFiles to avoid being overridden by postgresql.conf. */
+            if (pgl_archiving_enabled)
+            {
+                XLogArchiveMode = ARCHIVE_MODE_ON;
+                fprintf(stderr, "[pgl_backend] archive_mode set to ON (pgl_enable_archiving)\n");
+                fflush(stderr);
+            }
+#endif
+
             /* Read control file */
             fprintf(stderr, "[pgl_backend] B018: Calling LocalProcessControlFile()\n");
             fflush(stderr);
@@ -1187,6 +1200,17 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     /* Step 5: Config files */
     if (!SelectConfigFiles(NULL, "postgres"))
         fprintf(stderr, "[pgl_backend] WARNING: SelectConfigFiles failed, continuing\n");
+
+#ifdef PGL_MOBILE
+    /* Enable WAL archiving if requested via pgl_enable_archiving().
+     * archive_mode is PGC_POSTMASTER so it cannot be set via -c flag.
+     * Must be set AFTER SelectConfigFiles to avoid being overridden by postgresql.conf. */
+    if (pgl_archiving_enabled)
+    {
+        XLogArchiveMode = ARCHIVE_MODE_ON;
+        fprintf(stderr, "[pgl_backend] archive_mode set to ON (pgl_enable_archiving)\n");
+    }
+#endif
 
     /* Step 6: Control file */
     LocalProcessControlFile(false);
@@ -1785,7 +1809,7 @@ run_initdb:
             // attempt to restore STDIN before returning
             dup2(saved_stdin, STDIN_FILENO);
             close(saved_stdin);
-            stdin = fdopen(STDIN_FILENO, "r");
+            clearerr(stdin);  // reset EOF/error on stdin after dup2 restore
             return pgl_idb_status;
         }
 
@@ -2014,13 +2038,8 @@ run_initdb:
             return pgl_idb_status;
         }
         close(saved_stdin);
-        fprintf(stderr, "[pgl_main] about to fdopen(STDIN_FILENO)\n");
-        stdin = fdopen(STDIN_FILENO, "r");
-        if (!stdin)
-        {
-            fprintf(stderr, "[pgl_main] fdopen(STDIN) restore failed errno=%d\n", errno);
-            return pgl_idb_status;
-        }
+        fprintf(stderr, "[pgl_main] restoring stdin after dup2\n");
+        clearerr(stdin);  // reset EOF/error on stdin after dup2 restore
 #endif
         fprintf(stderr, "[pgl_main] stdin restoration completed\n");
         PGL_LOG_INFO("%s", "[pgl_main] stdin restoration phase completed");

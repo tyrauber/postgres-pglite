@@ -124,6 +124,14 @@ void pgl_skip_auth(void) {
 /* Global callback pointer defined in xlogarchive.c, NULL means no archive callback registered */
 extern pgl_archive_callback_t pgl_archive_callback_fn;
 
+/* Flag: if true, pgl_backend() will set archive_mode=on in its argv */
+volatile bool pgl_archiving_enabled = false;
+
+void pgl_enable_archiving(void) {
+  pgl_archiving_enabled = true;
+  PGL_LOG_INFO("pgl_enable_archiving: archive_mode will be enabled on next pgl_backend()");
+}
+
 void pgl_set_archive_callback(pgl_archive_callback_t callback) {
   pgl_archive_callback_fn = callback;
   PGL_LOG_INFO("pgl_set_archive_callback: %s", callback ? "registered" : "cleared");
