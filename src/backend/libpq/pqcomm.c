@@ -961,6 +961,14 @@ pq_recvbuf(void)
     return EOF;
 #endif
 
+#ifdef PGL_MOBILE
+	/*
+	 * Mobile/embedded: all data comes via the CMA buffer, set up in
+	 * pq_startmsgread().  If we get here the buffer is exhausted — return
+	 * EOF so callers see a clean end-of-input instead of undefined behaviour.
+	 */
+	return EOF;
+#endif
 
 	/* Ensure that we're in blocking mode */
 	socket_set_nonblocking(false);
@@ -1213,6 +1221,29 @@ pq_reset_buffer_state(void)
 {
 	PqRecvPointer = 0;
 	PqRecvLength = 0;
+}
+
+/* --------------------------------
+ *		pq_reset_session_state	- full reset of wire protocol buffers for new connections
+ *
+ * This resets both receive and send buffer state so a new client connection
+ * starts fresh. Called by pgl_reset_wire_session() when a client disconnects
+ * and a new one connects.
+ * --------------------------------
+ */
+void
+pq_reset_session_state(void)
+{
+	/* Reset receive buffer */
+	PqRecvPointer = 0;
+	PqRecvLength = 0;
+
+	/* Reset send buffer */
+	PqSendPointer = 0;
+	PqSendStart = 0;
+
+	/* Reset CMA write size so interactive_read() returns 0 */
+	pgl_mobile_cma_wsize = 0;
 }
 #endif
 
