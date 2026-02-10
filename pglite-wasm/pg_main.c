@@ -855,7 +855,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
         {
             setenv("PGUSER", PGUSER, 1);
             // Build single-user argv dynamically to avoid empty args (e.g., empty WASM_PGOPTS)
-            char *single_argv[24];
+            char *single_argv[32];
             int single_argc = 0;
             single_argv[single_argc++] = WASM_PREFIX "/bin/postgres";
             single_argv[single_argc++] = "--single";
@@ -880,6 +880,13 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             single_argv[single_argc++] = "-F";
             single_argv[single_argc++] = "-O";
             single_argv[single_argc++] = "-j";
+            // CRITICAL: Match initdb's backend_options for correct schema placement.
+            // Without search_path=pg_catalog, system views (pg_roles, pg_views, pg_indexes, etc.)
+            // land in 'public' instead of 'pg_catalog', making them invisible to standard queries.
+            // NOTE: exit_on_error=true is omitted because PGLite has known non-fatal errors
+            // during initdb (OID counter, dict_snowball) that must be tolerated.
+            single_argv[single_argc++] = "-c";
+            single_argv[single_argc++] = "search_path=pg_catalog";
             if (WASM_PGOPTS[0] != '\0')
             {
                 single_argv[single_argc++] = (char *)WASM_PGOPTS;
