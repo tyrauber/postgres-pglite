@@ -31,7 +31,8 @@ extern volatile int channel;
 #ifdef PGL_MOBILE
 #include "sdk_port-mobile.h"
 #include "pgl_os.h"
-static bool mobile_auth_started = false;
+/* Non-static so pgl_skip_auth() in sdk_port-mobile.c can set it */
+bool mobile_auth_started = false;
 
 #define MOBILE_LOG_CALL(func_name) PGL_LOG_INFO("CALL: %s() at line %d", func_name, __LINE__)
 #endif
@@ -314,6 +315,8 @@ use_wire(int state) {
     }
 }
 #endif
+
+// pgl_skip_auth() is now in sdk_port-mobile.c for proper symbol export
 
 __attribute__((export_name("clear_error")))
 void

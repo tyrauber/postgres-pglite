@@ -810,29 +810,24 @@ puts("# 775: CreateAuxProcessResourceOwner() completed");
 
 #ifdef PGL_MOBILE
 		/*
-		 * MOBILE FIX: Force clean shutdown state to skip WAL recovery.
+		 * MOBILE: WAL recovery is enabled.
 		 *
-		 * On mobile platforms (iOS/Android), when the app is killed or crashes,
-		 * the database may be left in an unclean state. When the app restarts,
-		 * StartupXLOG() tries to perform WAL recovery, but this crashes because
-		 * the VFD cache is empty and file handles are invalid.
+		 * On app restart after unclean shutdown, StartupXLOG() performs WAL
+		 * recovery to restore uncommitted transactions. This works because:
 		 *
-		 * Call PglMobileForceCleanShutdown() to force a clean shutdown state
-		 * before StartupXLOG() runs. This skips WAL recovery at the cost of
-		 * potentially losing uncommitted transactions.
+		 * 1. InitFileAccess() resets stale VFD cache (vfd_initialized_this_session guard)
+		 * 2. smgrinit() destroys stale SMgrRelationHash without closing invalid FDs
+		 * 3. InitBufferPool() allocates fresh shared memory via ShmemInitStruct()
 		 *
-		 * 2026-01-26: DISABLED FOR TESTING - Testing if WAL recovery now works
-		 * after VFD cache reset fixes (vfd_initialized_this_session guard,
-		 * SMgr hash reset, etc.). If this works, we can remove the workaround.
+		 * WAL recovery opens all files fresh through the reset VFD cache, so
+		 * stale file handles from the previous session are never used.
+		 *
+		 * If recovery ever becomes problematic, PglMobileForceCleanShutdown()
+		 * is available in xlog.c to skip recovery (at cost of data loss).
 		 */
-puts("# 776: [PGL_MOBILE] WAL recovery ENABLED for testing (PglMobileForceCleanShutdown disabled)");
-		// PglMobileForceCleanShutdown();  // DISABLED FOR TESTING
-puts("# 777: [PGL_MOBILE] Proceeding to StartupXLOG() with potential WAL recovery");
 #endif /* PGL_MOBILE */
 
-puts("# 778: about to call StartupXLOG()"); 
-		StartupXLOG();
-puts("# 779: StartupXLOG() returned successfully"); 
+		StartupXLOG(); 
 		/* Release (and warn about) any buffer pins leaked in StartupXLOG */
 puts("# 780: calling ReleaseAuxProcessResources()"); 
 		ReleaseAuxProcessResources(true);

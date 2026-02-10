@@ -66,6 +66,9 @@ extern PGDLLIMPORT bool proc_exit_inprogress;
 extern PGDLLIMPORT bool shmem_exit_inprogress;
 #if defined(__EMSCRIPTEN__) || defined(__wasi__)
 extern void pg_proc_exit(int code);
+#elif defined(PGL_MOBILE)
+/* Mobile builds: proc_exit may return (via siglongjmp or when pgl_boot_jmp is NULL) */
+extern void proc_exit(int code);
 #else
 extern void proc_exit(int code) pg_attribute_noreturn();
 #endif

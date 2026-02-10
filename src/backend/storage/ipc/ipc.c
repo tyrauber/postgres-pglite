@@ -20,8 +20,8 @@
 #include "postgres.h"
 
 #include <signal.h>
-#include <unistd.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #if defined(PGL_MOBILE)
 #include <setjmp.h>
 /*
@@ -40,18 +40,17 @@ volatile sigjmp_buf *pgl_boot_jmp __attribute__((weak)) = NULL;
 #include "storage/ipc.h"
 #include "tcop/tcopprot.h"
 
-
 /*
  * This flag is set during proc_exit() to change ereport()'s behavior,
  * so that an ereport() from an on_proc_exit routine cannot get us out
  * of the exit procedure.  We do NOT want to go back to the idle loop...
  */
-bool		proc_exit_inprogress = false;
+bool proc_exit_inprogress = false;
 
 /*
  * Set when shmem_exit() is in progress.
  */
-bool		shmem_exit_inprogress = false;
+bool shmem_exit_inprogress = false;
 
 /*
  * This flag tracks whether we've called atexit() in the current process
@@ -61,7 +60,6 @@ static bool atexit_callback_setup = false;
 
 /* local functions */
 static void proc_exit_prepare(int code);
-
 
 /* ----------------------------------------------------------------
  *						exit() handling stuff
@@ -79,20 +77,16 @@ static void proc_exit_prepare(int code);
 
 #define MAX_ON_EXITS 20
 
-struct ONEXIT
-{
-	pg_on_exit_callback function;
-	Datum		arg;
+struct ONEXIT {
+  pg_on_exit_callback function;
+  Datum arg;
 };
 
 static struct ONEXIT on_proc_exit_list[MAX_ON_EXITS];
 static struct ONEXIT on_shmem_exit_list[MAX_ON_EXITS];
 static struct ONEXIT before_shmem_exit_list[MAX_ON_EXITS];
 
-static int	on_proc_exit_index,
-			on_shmem_exit_index,
-			before_shmem_exit_index;
-
+static int on_proc_exit_index, on_shmem_exit_index, before_shmem_exit_index;
 
 /* ----------------------------------------------------------------
  *		proc_exit
@@ -109,156 +103,193 @@ static int	on_proc_exit_index,
  *		an atexit callback that will make sure cleanup happens.
  * ----------------------------------------------------------------
  */
-void
-proc_exit(int code)
-{
+void proc_exit(int code) {
 #if defined(__EMSCRIPTEN__) || defined(__wasi__)
-	if (code==66) {
-		fprintf(stderr,"# 108:fake shutdown\n");
-		proc_exit_inprogress = true;
-		InterruptPending = false;
-		ProcDiePending = false;
-		QueryCancelPending = false;
-		InterruptHoldoffCount = 1;
-		CritSectionCount = 0;
+  if (code == 66) {
+    fprintf(stderr, "# 108:fake shutdown\n");
+    proc_exit_inprogress = true;
+    InterruptPending = false;
+    ProcDiePending = false;
+    QueryCancelPending = false;
+    InterruptHoldoffCount = 1;
+    CritSectionCount = 0;
 
-		error_context_stack = NULL;
-		debug_query_string = NULL;
+    error_context_stack = NULL;
+    debug_query_string = NULL;
 
-		shmem_exit_inprogress = true;
-		int save_before_shmem_exit_index = before_shmem_exit_index;
-		while (--before_shmem_exit_index >= 0) {
-			if (before_shmem_exit_index!=4) {
-				printf("# skipped shmem_exit_index=%d/%d\n", before_shmem_exit_index, save_before_shmem_exit_index);
-				continue;
-			} else
-				printf("# before_shmem_exit_index=%d/%d\n", before_shmem_exit_index, save_before_shmem_exit_index);
-			before_shmem_exit_list[before_shmem_exit_index].function(code, before_shmem_exit_list[before_shmem_exit_index].arg);
-		}
-		before_shmem_exit_index = save_before_shmem_exit_index;
-		puts("# dsm_backend_shutdown ?");
-		// dsm_backend_shutdown();
-		shmem_exit_inprogress = false;
-		/*
-
-		int save_on_proc_exit_index = on_proc_exit_index;
-		while (--on_proc_exit_index >= 0) {
-			printf("# on_proc_exit_list=%d/%d\n", on_proc_exit_list, save_on_proc_exit_index);
-			on_proc_exit_list[on_proc_exit_index].function(code, on_proc_exit_list[on_proc_exit_index].arg);
-		}
-		on_proc_exit_index = save_on_proc_exit_index;
-		*/
-	} else {
-		proc_exit_inprogress = true;
-		fprintf(stderr,"# proc_exit(%d) ignored at 118:%s\n",code, __FILE__);
+    shmem_exit_inprogress = true;
+    int save_before_shmem_exit_index = before_shmem_exit_index;
+    while (--before_shmem_exit_index >= 0) {
+      if (before_shmem_exit_index != 4) {
+        printf("# skipped shmem_exit_index=%d/%d\n", before_shmem_exit_index,
+               save_before_shmem_exit_index);
+        continue;
+      } else
+        printf("# before_shmem_exit_index=%d/%d\n", before_shmem_exit_index,
+               save_before_shmem_exit_index);
+      before_shmem_exit_list[before_shmem_exit_index].function(
+          code, before_shmem_exit_list[before_shmem_exit_index].arg);
     }
-    return;
+    before_shmem_exit_index = save_before_shmem_exit_index;
+    puts("# dsm_backend_shutdown ?");
+    // dsm_backend_shutdown();
+    shmem_exit_inprogress = false;
+    /*
+
+    int save_on_proc_exit_index = on_proc_exit_index;
+    while (--on_proc_exit_index >= 0) {
+            printf("# on_proc_exit_list=%d/%d\n", on_proc_exit_list,
+    save_on_proc_exit_index);
+            on_proc_exit_list[on_proc_exit_index].function(code,
+    on_proc_exit_list[on_proc_exit_index].arg);
+    }
+    on_proc_exit_index = save_on_proc_exit_index;
+    */
+  } else {
+    proc_exit_inprogress = true;
+    fprintf(stderr, "# proc_exit(%d) ignored at 118:%s\n", code, __FILE__);
+  }
+  return;
 #endif
 #if defined(PGL_MOBILE)
-	/*
-	 * Mobile platforms (iOS/Android) run PostgreSQL in-process as a library.
-	 * We cannot call exit() as it would terminate the host app.
-	 * 
-	 * pgl_boot_jmp is set by the mobile glue layer (pg_main.c) before calling
-	 * PostgreSQL initialization functions. If set, we longjmp back to the caller.
-	 * If not set (normal query execution), we just mark exit in progress and return.
-	 *
-	 * IMPORTANT: pgl_boot_jmp points to a STATIC buffer in pg_main.c, not a
-	 * stack-local variable. This ensures the jump buffer is always valid when set.
-	 */
-	proc_exit_inprogress = true;
-	
-	/* Get a local copy of the volatile pointer to avoid race conditions */
-	sigjmp_buf *jmp_buf_ptr = (sigjmp_buf *)pgl_boot_jmp;
-	
-	fprintf(stderr, "[proc_exit] code=%d, pgl_boot_jmp=%p, jmp_buf_ptr=%p\n", 
-			code, (void*)pgl_boot_jmp, (void*)jmp_buf_ptr);
-	
-	if (jmp_buf_ptr != NULL)
-	{
-		/* Validate the jump buffer pointer is in a reasonable address range.
-		 * On iOS/ARM64, valid heap/stack addresses are typically > 0x100000000.
-		 * A pointer value < 0x10000 is almost certainly invalid/corrupted. */
-		uintptr_t ptr_val = (uintptr_t)jmp_buf_ptr;
-		if (ptr_val < 0x10000)
-		{
-			fprintf(stderr, "[proc_exit] ERROR: pgl_boot_jmp contains invalid pointer %p (< 0x10000), NOT jumping!\n",
-					(void*)jmp_buf_ptr);
-			/* Clear the invalid pointer to prevent future crashes */
-			pgl_boot_jmp = NULL;
-			return;
-		}
-		
-		/* Additional sanity check: verify the first few bytes of the jump buffer
-		 * are accessible by reading them. This helps catch corrupted pointers. */
-		volatile unsigned char *test_ptr = (volatile unsigned char *)jmp_buf_ptr;
-		unsigned char test_byte = *test_ptr;  /* Will crash here if pointer is bad */
-		(void)test_byte;  /* Suppress unused variable warning */
-		
-		fprintf(stderr, "[proc_exit] Jumping to pgl_boot_jmp at %p\n", (void*)jmp_buf_ptr);
-		
-		/* Jump back to initialization code - this is expected during bootstrap/init */
-		siglongjmp(*jmp_buf_ptr, 1);
-	}
-	/*
-	 * Outside bootstrap context (pgl_boot_jmp == NULL), we're in normal query
-	 * execution or process cleanup. PostgreSQL's error handling (PG_exception_stack)
-	 * should have caught any recoverable errors. If we reach proc_exit() here, it's
-	 * a fatal error that can't be recovered. We mark exit in progress and return -
-	 * the caller will need to handle this gracefully.
-	 */
-	return;
-#endif
-	/* not safe if forked by system(), etc. */
-	if (MyProcPid != (int) getpid())
-		elog(PANIC, "proc_exit() called in child process");
+  /*
+   * Mobile platforms (iOS/Android) run PostgreSQL in-process as a library.
+   * We cannot call exit() as it would terminate the host app.
+   *
+   * pgl_boot_jmp is set by the mobile glue layer (pg_main.c) before calling
+   * PostgreSQL initialization functions. If set, we longjmp back to the caller.
+   * If not set (normal query execution), we just mark exit in progress and
+   * return.
+   *
+   * IMPORTANT: pgl_boot_jmp points to a STATIC buffer in pg_main.c, not a
+   * stack-local variable. This ensures the jump buffer is always valid when
+   * set.
+   */
+  fprintf(stderr, "[proc_exit] >>> ENTRY code=%d (PGL_MOBILE path)\n", code);
+  fflush(stderr);
 
-	/* Clean up everything that must be cleaned up */
-	proc_exit_prepare(code);
+  proc_exit_inprogress = true;
+
+  /* Get a local copy of the volatile pointer to avoid race conditions */
+  sigjmp_buf *jmp_buf_ptr = (sigjmp_buf *)pgl_boot_jmp;
+
+  fprintf(stderr, "[proc_exit] pgl_boot_jmp=%p, jmp_buf_ptr=%p\n",
+          (void *)pgl_boot_jmp, (void *)jmp_buf_ptr);
+  fflush(stderr);
+
+  if (jmp_buf_ptr != NULL) {
+    /* Validate the jump buffer pointer is in a reasonable address range.
+     * On iOS/ARM64, valid heap/stack addresses are typically > 0x100000000.
+     * A pointer value < 0x10000 is almost certainly invalid/corrupted. */
+    uintptr_t ptr_val = (uintptr_t)jmp_buf_ptr;
+    fprintf(stderr, "[proc_exit] ptr_val=0x%lx\n", (unsigned long)ptr_val);
+    fflush(stderr);
+
+    if (ptr_val < 0x10000) {
+      fprintf(stderr,
+              "[proc_exit] ERROR: pgl_boot_jmp contains invalid pointer %p (< "
+              "0x10000), NOT jumping!\n",
+              (void *)jmp_buf_ptr);
+      fflush(stderr);
+      /* Clear the invalid pointer to prevent future crashes */
+      pgl_boot_jmp = NULL;
+      fprintf(stderr, "[proc_exit] Returning without jump (invalid pointer)\n");
+      fflush(stderr);
+      return;
+    }
+
+    /* Additional sanity check: verify the first few bytes of the jump buffer
+     * are accessible by reading them. This helps catch corrupted pointers. */
+    fprintf(stderr, "[proc_exit] About to test jump buffer accessibility...\n");
+    fflush(stderr);
+    volatile unsigned char *test_ptr = (volatile unsigned char *)jmp_buf_ptr;
+    unsigned char test_byte = *test_ptr; /* Will crash here if pointer is bad */
+    (void)test_byte;                     /* Suppress unused variable warning */
+    fprintf(stderr,
+            "[proc_exit] Jump buffer is accessible (test_byte=0x%02x)\n",
+            test_byte);
+    fflush(stderr);
+
+    fprintf(stderr,
+            "[proc_exit] >>> Calling siglongjmp to pgl_boot_jmp at %p\n",
+            (void *)jmp_buf_ptr);
+    fflush(stderr);
+
+    /* Jump back to initialization code - this is expected during bootstrap/init
+     */
+    siglongjmp(*jmp_buf_ptr, 1);
+
+    /* Should never reach here */
+    fprintf(
+        stderr,
+        "[proc_exit] ERROR: siglongjmp returned! This should never happen.\n");
+    fflush(stderr);
+  }
+  /*
+   * Outside bootstrap context (pgl_boot_jmp == NULL), we're in normal query
+   * execution or process cleanup. PostgreSQL's error handling
+   * (PG_exception_stack) should have caught any recoverable errors. If we reach
+   * proc_exit() here, it's a fatal error that can't be recovered. We mark exit
+   * in progress and return - the caller will need to handle this gracefully.
+   */
+  fprintf(stderr, "[proc_exit] pgl_boot_jmp is NULL - returning without jump "
+                  "(fatal error during query?)\n");
+  fflush(stderr);
+  return;
+
+  #else
+  /* Regular (non-mobile, non-WASM) code path */
+  /* not safe if forked by system(), etc. */
+  if (MyProcPid != (int)getpid())
+    elog(PANIC, "proc_exit() called in child process");
+
+  /* Clean up everything that must be cleaned up */
+  proc_exit_prepare(code);
 
 #ifdef PROFILE_PID_DIR
-	{
-		/*
-		 * If we are profiling ourself then gprof's mcleanup() is about to
-		 * write out a profile to ./gmon.out.  Since mcleanup() always uses a
-		 * fixed file name, each backend will overwrite earlier profiles. To
-		 * fix that, we create a separate subdirectory for each backend
-		 * (./gprof/pid) and 'cd' to that subdirectory before we exit() - that
-		 * forces mcleanup() to write each profile into its own directory.  We
-		 * end up with something like: $PGDATA/gprof/8829/gmon.out
-		 * $PGDATA/gprof/8845/gmon.out ...
-		 *
-		 * To avoid undesirable disk space bloat, autovacuum workers are
-		 * discriminated against: all their gmon.out files go into the same
-		 * subdirectory.  Without this, an installation that is "just sitting
-		 * there" nonetheless eats megabytes of disk space every few seconds.
-		 *
-		 * Note that we do this here instead of in an on_proc_exit() callback
-		 * because we want to ensure that this code executes last - we don't
-		 * want to interfere with any other on_proc_exit() callback.  For the
-		 * same reason, we do not include it in proc_exit_prepare ... so if
-		 * you are exiting in the "wrong way" you won't drop your profile in a
-		 * nice place.
-		 */
-		char		gprofDirName[32];
+  {
+    /*
+     * If we are profiling ourself then gprof's mcleanup() is about to
+     * write out a profile to ./gmon.out.  Since mcleanup() always uses a
+     * fixed file name, each backend will overwrite earlier profiles. To
+     * fix that, we create a separate subdirectory for each backend
+     * (./gprof/pid) and 'cd' to that subdirectory before we exit() - that
+     * forces mcleanup() to write each profile into its own directory.  We
+     * end up with something like: $PGDATA/gprof/8829/gmon.out
+     * $PGDATA/gprof/8845/gmon.out ...
+     *
+     * To avoid undesirable disk space bloat, autovacuum workers are
+     * discriminated against: all their gmon.out files go into the same
+     * subdirectory.  Without this, an installation that is "just sitting
+     * there" nonetheless eats megabytes of disk space every few seconds.
+     *
+     * Note that we do this here instead of in an on_proc_exit() callback
+     * because we want to ensure that this code executes last - we don't
+     * want to interfere with any other on_proc_exit() callback.  For the
+     * same reason, we do not include it in proc_exit_prepare ... so if
+     * you are exiting in the "wrong way" you won't drop your profile in a
+     * nice place.
+     */
+    char gprofDirName[32];
 
-		if (AmAutoVacuumWorkerProcess())
-			snprintf(gprofDirName, 32, "gprof/avworker");
-		else
-			snprintf(gprofDirName, 32, "gprof/%d", (int) getpid());
+    if (AmAutoVacuumWorkerProcess())
+      snprintf(gprofDirName, 32, "gprof/avworker");
+    else
+      snprintf(gprofDirName, 32, "gprof/%d", (int)getpid());
 
-		/*
-		 * Use mkdir() instead of MakePGDirectory() since we aren't making a
-		 * PG directory here.
-		 */
-		mkdir("gprof", S_IRWXU | S_IRWXG | S_IRWXO);
-		mkdir(gprofDirName, S_IRWXU | S_IRWXG | S_IRWXO);
-		chdir(gprofDirName);
-	}
+    /*
+     * Use mkdir() instead of MakePGDirectory() since we aren't making a
+     * PG directory here.
+     */
+    mkdir("gprof", S_IRWXU | S_IRWXG | S_IRWXO);
+    mkdir(gprofDirName, S_IRWXU | S_IRWXG | S_IRWXO);
+    chdir(gprofDirName);
+  }
 #endif
 
-	elog(DEBUG3, "exit(%d)", code);
-	exit(code);
+  elog(DEBUG3, "exit(%d)", code);
+  exit(code);
+#endif /* !PGL_MOBILE && !__EMSCRIPTEN__ && !__wasi__ */
 }
 
 /*
@@ -266,59 +297,56 @@ proc_exit(int code)
  * normal exit through proc_exit, this will actually be called twice ...
  * but the second call will have nothing to do.
  */
-static void
-proc_exit_prepare(int code)
-{
-	/*
-	 * Once we set this flag, we are committed to exit.  Any ereport() will
-	 * NOT send control back to the main loop, but right back here.
-	 */
-	proc_exit_inprogress = true;
+static void proc_exit_prepare(int code) {
+  /*
+   * Once we set this flag, we are committed to exit.  Any ereport() will
+   * NOT send control back to the main loop, but right back here.
+   */
+  proc_exit_inprogress = true;
 
-	/*
-	 * Forget any pending cancel or die requests; we're doing our best to
-	 * close up shop already.  Note that the signal handlers will not set
-	 * these flags again, now that proc_exit_inprogress is set.
-	 */
-	InterruptPending = false;
-	ProcDiePending = false;
-	QueryCancelPending = false;
-	InterruptHoldoffCount = 1;
-	CritSectionCount = 0;
+  /*
+   * Forget any pending cancel or die requests; we're doing our best to
+   * close up shop already.  Note that the signal handlers will not set
+   * these flags again, now that proc_exit_inprogress is set.
+   */
+  InterruptPending = false;
+  ProcDiePending = false;
+  QueryCancelPending = false;
+  InterruptHoldoffCount = 1;
+  CritSectionCount = 0;
 
-	/*
-	 * Also clear the error context stack, to prevent error callbacks from
-	 * being invoked by any elog/ereport calls made during proc_exit. Whatever
-	 * context they might want to offer is probably not relevant, and in any
-	 * case they are likely to fail outright after we've done things like
-	 * aborting any open transaction.  (In normal exit scenarios the context
-	 * stack should be empty anyway, but it might not be in the case of
-	 * elog(FATAL) for example.)
-	 */
-	error_context_stack = NULL;
-	/* For the same reason, reset debug_query_string before it's clobbered */
-	debug_query_string = NULL;
+  /*
+   * Also clear the error context stack, to prevent error callbacks from
+   * being invoked by any elog/ereport calls made during proc_exit. Whatever
+   * context they might want to offer is probably not relevant, and in any
+   * case they are likely to fail outright after we've done things like
+   * aborting any open transaction.  (In normal exit scenarios the context
+   * stack should be empty anyway, but it might not be in the case of
+   * elog(FATAL) for example.)
+   */
+  error_context_stack = NULL;
+  /* For the same reason, reset debug_query_string before it's clobbered */
+  debug_query_string = NULL;
 
-	/* do our shared memory exits first */
-	shmem_exit(code);
+  /* do our shared memory exits first */
+  shmem_exit(code);
 
-	elog(DEBUG3, "proc_exit(%d): %d callbacks to make",
-		 code, on_proc_exit_index);
+  elog(DEBUG3, "proc_exit(%d): %d callbacks to make", code, on_proc_exit_index);
 
-	/*
-	 * call all the registered callbacks.
-	 *
-	 * Note that since we decrement on_proc_exit_index each time, if a
-	 * callback calls ereport(ERROR) or ereport(FATAL) then it won't be
-	 * invoked again when control comes back here (nor will the
-	 * previously-completed callbacks).  So, an infinite loop should not be
-	 * possible.
-	 */
-	while (--on_proc_exit_index >= 0)
-		on_proc_exit_list[on_proc_exit_index].function(code,
-													   on_proc_exit_list[on_proc_exit_index].arg);
+  /*
+   * call all the registered callbacks.
+   *
+   * Note that since we decrement on_proc_exit_index each time, if a
+   * callback calls ereport(ERROR) or ereport(FATAL) then it won't be
+   * invoked again when control comes back here (nor will the
+   * previously-completed callbacks).  So, an infinite loop should not be
+   * possible.
+   */
+  while (--on_proc_exit_index >= 0)
+    on_proc_exit_list[on_proc_exit_index].function(
+        code, on_proc_exit_list[on_proc_exit_index].arg);
 
-	on_proc_exit_index = 0;
+  on_proc_exit_index = 0;
 }
 
 /* ------------------
@@ -329,60 +357,58 @@ proc_exit_prepare(int code)
  * infinite loop in case of error.
  * ------------------
  */
-void
-shmem_exit(int code)
-{
-	shmem_exit_inprogress = true;
-if (code!=66){
-	/*
-	 * Call before_shmem_exit callbacks.
-	 *
-	 * These should be things that need most of the system to still be up and
-	 * working, such as cleanup of temp relations, which requires catalog
-	 * access; or things that need to be completed because later cleanup steps
-	 * depend on them, such as releasing lwlocks.
-	 */
-	elog(DEBUG3, "shmem_exit(%d): %d before_shmem_exit callbacks to make",
-		 code, before_shmem_exit_index);
-	while (--before_shmem_exit_index >= 0)
-		before_shmem_exit_list[before_shmem_exit_index].function(code,
-																 before_shmem_exit_list[before_shmem_exit_index].arg);
-	before_shmem_exit_index = 0;
+void shmem_exit(int code) {
+  shmem_exit_inprogress = true;
+  if (code != 66) {
+    /*
+     * Call before_shmem_exit callbacks.
+     *
+     * These should be things that need most of the system to still be up and
+     * working, such as cleanup of temp relations, which requires catalog
+     * access; or things that need to be completed because later cleanup steps
+     * depend on them, such as releasing lwlocks.
+     */
+    elog(DEBUG3, "shmem_exit(%d): %d before_shmem_exit callbacks to make", code,
+         before_shmem_exit_index);
+    while (--before_shmem_exit_index >= 0)
+      before_shmem_exit_list[before_shmem_exit_index].function(
+          code, before_shmem_exit_list[before_shmem_exit_index].arg);
+    before_shmem_exit_index = 0;
 
-	/*
-	 * Call dynamic shared memory callbacks.
-	 *
-	 * These serve the same purpose as late callbacks, but for dynamic shared
-	 * memory segments rather than the main shared memory segment.
-	 * dsm_backend_shutdown() has the same kind of progressive logic we use
-	 * for the main shared memory segment; namely, it unregisters each
-	 * callback before invoking it, so that we don't get stuck in an infinite
-	 * loop if one of those callbacks itself throws an ERROR or FATAL.
-	 *
-	 * Note that explicitly calling this function here is quite different from
-	 * registering it as an on_shmem_exit callback for precisely this reason:
-	 * if one dynamic shared memory callback errors out, the remaining
-	 * callbacks will still be invoked.  Thus, hard-coding this call puts it
-	 * equal footing with callbacks for the main shared memory segment.
-	 */
-	dsm_backend_shutdown();
+    /*
+     * Call dynamic shared memory callbacks.
+     *
+     * These serve the same purpose as late callbacks, but for dynamic shared
+     * memory segments rather than the main shared memory segment.
+     * dsm_backend_shutdown() has the same kind of progressive logic we use
+     * for the main shared memory segment; namely, it unregisters each
+     * callback before invoking it, so that we don't get stuck in an infinite
+     * loop if one of those callbacks itself throws an ERROR or FATAL.
+     *
+     * Note that explicitly calling this function here is quite different from
+     * registering it as an on_shmem_exit callback for precisely this reason:
+     * if one dynamic shared memory callback errors out, the remaining
+     * callbacks will still be invoked.  Thus, hard-coding this call puts it
+     * equal footing with callbacks for the main shared memory segment.
+     */
+    dsm_backend_shutdown();
 
-	/*
-	 * Call on_shmem_exit callbacks.
-	 *
-	 * These are generally releasing low-level shared memory resources.  In
-	 * some cases, this is a backstop against the possibility that the early
-	 * callbacks might themselves fail, leading to re-entry to this routine;
-	 * in other cases, it's cleanup that only happens at process exit.
-	 */
-	elog(DEBUG3, "shmem_exit(%d): %d on_shmem_exit callbacks to make",
-		 code, on_shmem_exit_index);
-	while (--on_shmem_exit_index >= 0)
-		on_shmem_exit_list[on_shmem_exit_index].function(code,
-														 on_shmem_exit_list[on_shmem_exit_index].arg);
-	on_shmem_exit_index = 0;
-}
-	shmem_exit_inprogress = false;
+    /*
+     * Call on_shmem_exit callbacks.
+     *
+     * These are generally releasing low-level shared memory resources.  In
+     * some cases, this is a backstop against the possibility that the early
+     * callbacks might themselves fail, leading to re-entry to this routine;
+     * in other cases, it's cleanup that only happens at process exit.
+     */
+    elog(DEBUG3, "shmem_exit(%d): %d on_shmem_exit callbacks to make", code,
+         on_shmem_exit_index);
+    while (--on_shmem_exit_index >= 0)
+      on_shmem_exit_list[on_shmem_exit_index].function(
+          code, on_shmem_exit_list[on_shmem_exit_index].arg);
+    on_shmem_exit_index = 0;
+  }
+  shmem_exit_inprogress = false;
 }
 
 /* ----------------------------------------------------------------
@@ -395,12 +421,10 @@ if (code!=66){
  * postmaster treat it as a crash --- see pmsignal.c.
  * ----------------------------------------------------------------
  */
-static void
-atexit_callback(void)
-{
-	/* Clean up everything that must be cleaned up */
-	/* ... too bad we don't know the real exit code ... */
-	proc_exit_prepare(-1);
+static void atexit_callback(void) {
+  /* Clean up everything that must be cleaned up */
+  /* ... too bad we don't know the real exit code ... */
+  proc_exit_prepare(-1);
 }
 
 /* ----------------------------------------------------------------
@@ -410,24 +434,20 @@ atexit_callback(void)
  *		functions invoked by proc_exit().   -cim 2/6/90
  * ----------------------------------------------------------------
  */
-void
-on_proc_exit(pg_on_exit_callback function, Datum arg)
-{
-	if (on_proc_exit_index >= MAX_ON_EXITS)
-		ereport(FATAL,
-				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				 errmsg_internal("out of on_proc_exit slots")));
+void on_proc_exit(pg_on_exit_callback function, Datum arg) {
+  if (on_proc_exit_index >= MAX_ON_EXITS)
+    ereport(FATAL, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    errmsg_internal("out of on_proc_exit slots")));
 
-	on_proc_exit_list[on_proc_exit_index].function = function;
-	on_proc_exit_list[on_proc_exit_index].arg = arg;
+  on_proc_exit_list[on_proc_exit_index].function = function;
+  on_proc_exit_list[on_proc_exit_index].arg = arg;
 
-	++on_proc_exit_index;
+  ++on_proc_exit_index;
 
-	if (!atexit_callback_setup)
-	{
-		atexit(atexit_callback);
-		atexit_callback_setup = true;
-	}
+  if (!atexit_callback_setup) {
+    atexit(atexit_callback);
+    atexit_callback_setup = true;
+  }
 }
 
 /* ----------------------------------------------------------------
@@ -438,24 +458,26 @@ on_proc_exit(pg_on_exit_callback function, Datum arg)
  *		low-level subsystems.
  * ----------------------------------------------------------------
  */
-void
-before_shmem_exit(pg_on_exit_callback function, Datum arg)
-{
-	if (before_shmem_exit_index >= MAX_ON_EXITS)
-		ereport(FATAL,
-				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				 errmsg_internal("out of before_shmem_exit slots")));
+void before_shmem_exit(pg_on_exit_callback function, Datum arg) {
+puts("[before_shmem_exit] entered");
+  if (before_shmem_exit_index >= MAX_ON_EXITS)
+    ereport(FATAL, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    errmsg_internal("out of before_shmem_exit slots")));
 
-	before_shmem_exit_list[before_shmem_exit_index].function = function;
-	before_shmem_exit_list[before_shmem_exit_index].arg = arg;
+puts("[before_shmem_exit] adding to list");
+  before_shmem_exit_list[before_shmem_exit_index].function = function;
+  before_shmem_exit_list[before_shmem_exit_index].arg = arg;
 
-	++before_shmem_exit_index;
+  ++before_shmem_exit_index;
+puts("[before_shmem_exit] checking atexit");
 
-	if (!atexit_callback_setup)
-	{
-		atexit(atexit_callback);
-		atexit_callback_setup = true;
-	}
+  if (!atexit_callback_setup) {
+puts("[before_shmem_exit] calling atexit()");
+    atexit(atexit_callback);
+puts("[before_shmem_exit] atexit() done");
+    atexit_callback_setup = true;
+  }
+puts("[before_shmem_exit] returning");
 }
 
 /* ----------------------------------------------------------------
@@ -466,35 +488,36 @@ before_shmem_exit(pg_on_exit_callback function, Datum arg)
  *		callbacks and before on_proc_exit callbacks.
  * ----------------------------------------------------------------
  */
-void
-on_shmem_exit(pg_on_exit_callback function, Datum arg)
-{
+void on_shmem_exit(pg_on_exit_callback function, Datum arg) {
 #if defined(__wasi__) || defined(__EMSCRIPTEN__)
-    if (!atexit_callback_setup) {
-        PDEBUG("# 410:" __FILE__ " on_shmem_exit(pg_on_exit_callback function, Datum arg) FIRST CALL");
-        if (on_shmem_exit_index >= MAX_ON_EXITS) {
-            PDEBUG("# 412:" __FILE__ " on_shmem_exit(pg_on_exit_callback function, Datum arg) OVERFLOW");
-        }
-    } else {
-        PDEBUG("# 415:" __FILE__ " on_shmem_exit(pg_on_exit_callback function, Datum arg) STUB");
-        return;
+  if (!atexit_callback_setup) {
+    PDEBUG(
+        "# 410:" __FILE__
+        " on_shmem_exit(pg_on_exit_callback function, Datum arg) FIRST CALL");
+    if (on_shmem_exit_index >= MAX_ON_EXITS) {
+      PDEBUG(
+          "# 412:" __FILE__
+          " on_shmem_exit(pg_on_exit_callback function, Datum arg) OVERFLOW");
     }
+  } else {
+    PDEBUG("# 415:" __FILE__
+           " on_shmem_exit(pg_on_exit_callback function, Datum arg) STUB");
+    return;
+  }
 #endif
-	if (on_shmem_exit_index >= MAX_ON_EXITS)
-		ereport(FATAL,
-				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				 errmsg_internal("out of on_shmem_exit slots")));
+  if (on_shmem_exit_index >= MAX_ON_EXITS)
+    ereport(FATAL, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    errmsg_internal("out of on_shmem_exit slots")));
 
-	on_shmem_exit_list[on_shmem_exit_index].function = function;
-	on_shmem_exit_list[on_shmem_exit_index].arg = arg;
+  on_shmem_exit_list[on_shmem_exit_index].function = function;
+  on_shmem_exit_list[on_shmem_exit_index].arg = arg;
 
-	++on_shmem_exit_index;
+  ++on_shmem_exit_index;
 
-	if (!atexit_callback_setup)
-	{
-		atexit(atexit_callback);
-		atexit_callback_setup = true;
-	}
+  if (!atexit_callback_setup) {
+    atexit(atexit_callback);
+    atexit_callback_setup = true;
+  }
 }
 
 /* ----------------------------------------------------------------
@@ -506,50 +529,45 @@ on_shmem_exit(pg_on_exit_callback function, Datum arg)
  * 		callbacks in strict LIFO order.
  * ----------------------------------------------------------------
  */
-void
-cancel_before_shmem_exit(pg_on_exit_callback function, Datum arg)
-{
-	if (before_shmem_exit_index > 0 &&
-		before_shmem_exit_list[before_shmem_exit_index - 1].function
-		== function &&
-		before_shmem_exit_list[before_shmem_exit_index - 1].arg == arg)
-		--before_shmem_exit_index;
-	else
-		elog(ERROR, "before_shmem_exit callback (%p,0x%llx) is not the latest entry",
-			 function, (long long) arg);
+void cancel_before_shmem_exit(pg_on_exit_callback function, Datum arg) {
+  if (before_shmem_exit_index > 0 &&
+      before_shmem_exit_list[before_shmem_exit_index - 1].function ==
+          function &&
+      before_shmem_exit_list[before_shmem_exit_index - 1].arg == arg)
+    --before_shmem_exit_index;
+  else
+    elog(ERROR,
+         "before_shmem_exit callback (%p,0x%llx) is not the latest entry",
+         function, (long long)arg);
 }
 
 /* ----------------------------------------------------------------
  *		on_exit_reset
  *
  *		this function clears all on_proc_exit() and on_shmem_exit()
- *		registered functions.  This is used just after forking a backend,
- *		so that the backend doesn't believe it should call the postmaster's
+ *		registered functions.  This is used just after forking a
+ *backend, so that the backend doesn't believe it should call the postmaster's
  *		on-exit routines when it exits...
  * ----------------------------------------------------------------
  */
-void
-on_exit_reset(void)
-{
-	before_shmem_exit_index = 0;
-	on_shmem_exit_index = 0;
-	on_proc_exit_index = 0;
-	reset_on_dsm_detach();
+void on_exit_reset(void) {
+  before_shmem_exit_index = 0;
+  on_shmem_exit_index = 0;
+  on_proc_exit_index = 0;
+  reset_on_dsm_detach();
 }
 
 /* ----------------------------------------------------------------
  *		check_on_shmem_exit_lists_are_empty
  *
- *		Debugging check that no shmem cleanup handlers have been registered
- *		prematurely in the current process.
+ *		Debugging check that no shmem cleanup handlers have been
+ *registered prematurely in the current process.
  * ----------------------------------------------------------------
  */
-void
-check_on_shmem_exit_lists_are_empty(void)
-{
-	if (before_shmem_exit_index)
-		elog(FATAL, "before_shmem_exit has been called prematurely");
-	if (on_shmem_exit_index)
-		elog(FATAL, "on_shmem_exit has been called prematurely");
-	/* Checking DSM detach state seems unnecessary given the above */
+void check_on_shmem_exit_lists_are_empty(void) {
+  if (before_shmem_exit_index)
+    elog(FATAL, "before_shmem_exit has been called prematurely");
+  if (on_shmem_exit_index)
+    elog(FATAL, "on_shmem_exit has been called prematurely");
+  /* Checking DSM detach state seems unnecessary given the above */
 }

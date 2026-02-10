@@ -904,41 +904,51 @@ get_share_path(const char *my_exec_path, char *ret_path)
 	/*
 	 * Mobile platforms bundle PostgreSQL data files in the app.
 	 * Use environment variables to find them instead of deriving from exec path.
-	 * 
+	 *
+	 * Priority order:
+	 * 1. PREFIX - explicit app prefix (set by test harness or pglite-daemon)
+	 * 2. IOS_RUNTIME_DIR / ANDROID_RUNTIME_DIR - mobile runtime bundles
+	 * 3. PGSYSCONFDIR - legacy; BUT set_pglocale_pgservice() in exec.c
+	 *    auto-sets this to <exec_dir>/../etc via get_etc_path(), so checking
+	 *    it first would resolve to PREFIX/etc/share instead of PREFIX/share.
+	 * 4. Fallback to /data/local/tmp/pglite/share
+	 *
 	 * iOS bundle structure:
 	 *   share/postgresql/  <- postgres.bki, *.sql, etc.
 	 *   share/timezonesets/ <- timezone abbreviation files
 	 *   share/timezone/     <- timezone data
 	 *   share/extension/    <- extension files
-	 *
-	 * PGSYSCONFDIR should point to the PARENT of share/ (e.g., /path/to/runtime)
-	 * This function returns PGSYSCONFDIR/share/postgresql for initdb (postgres.bki)
-	 * BUT tzparser.c appends /timezonesets/ expecting share_path to be share/
-	 * 
-	 * To handle both cases, we return PGSYSCONFDIR/share which contains both
-	 * postgresql/ and timezonesets/ as siblings.
 	 */
-	const char *conf = getenv("PGSYSCONFDIR");
+	const char *prefix = getenv("PREFIX");
+	if (prefix && *prefix)
+	{
+		snprintf(ret_path, MAXPGPATH, "%s/share", prefix);
+		return;
+	}
+
 #ifdef __APPLE__
 	const char *runtime = getenv("IOS_RUNTIME_DIR");
 #else
 	const char *runtime = getenv("ANDROID_RUNTIME_DIR");
 #endif
-	
-	/* Try PGSYSCONFDIR first - append /share to get to the share directory */
-	if (conf && *conf)
-	{
-		snprintf(ret_path, MAXPGPATH, "%s/share", conf);
-		return;
-	}
-	
+
 	/* Try runtime directory - append /share */
 	if (runtime && *runtime)
 	{
 		snprintf(ret_path, MAXPGPATH, "%s/share", runtime);
 		return;
 	}
-	
+
+	/* Try PGSYSCONFDIR last - may be auto-set to PREFIX/etc by exec.c */
+	{
+		const char *conf = getenv("PGSYSCONFDIR");
+		if (conf && *conf)
+		{
+			snprintf(ret_path, MAXPGPATH, "%s/share", conf);
+			return;
+		}
+	}
+
 	/* Fallback for Android */
 	strlcpy(ret_path, "/data/local/tmp/pglite/share", MAXPGPATH);
 #else

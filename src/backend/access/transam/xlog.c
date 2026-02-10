@@ -5482,6 +5482,8 @@ StartupXLOG(void)
 	TransactionId oldestActiveXID;
 	bool		promoted = false;
 
+puts("# StartupXLOG:001 entered"); 
+
 	/*
 	 * We should have an aux process resource owner to use, and we should not
 	 * be in a transaction that's installed some other resowner.
@@ -5491,6 +5493,8 @@ StartupXLOG(void)
 		   CurrentResourceOwner == AuxProcessResourceOwner);
 	CurrentResourceOwner = AuxProcessResourceOwner;
 
+puts("# StartupXLOG:002 ResourceOwner set"); 
+
 	/*
 	 * Check that contents look valid.
 	 */
@@ -5498,6 +5502,8 @@ StartupXLOG(void)
 		ereport(FATAL,
 				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg("control file contains invalid checkpoint location")));
+
+puts("# StartupXLOG:003 checkpoint location valid"); 
 
 	switch (ControlFile->state)
 	{
@@ -5552,6 +5558,8 @@ StartupXLOG(void)
 					 errmsg("control file contains invalid database cluster state")));
 	}
 
+puts("# StartupXLOG:004 switch on ControlFile->state completed"); 
+
 	/* This is just to allow attaching to startup process with a debugger */
 #ifdef XLOG_REPLAY_DELAY
 	if (ControlFile->state != DB_SHUTDOWNED)
@@ -5563,7 +5571,9 @@ StartupXLOG(void)
 	 * In cases where someone has performed a copy for PITR, these directories
 	 * may have been excluded and need to be re-created.
 	 */
+puts("# StartupXLOG:005 about to call ValidateXLOGDirectoryStructure()"); 
 	ValidateXLOGDirectoryStructure();
+puts("# StartupXLOG:006 ValidateXLOGDirectoryStructure() done"); 
 
 	/* Set up timeout handler needed to report startup progress. */
 	if (!IsBootstrapProcessingMode())
@@ -5602,109 +5612,112 @@ StartupXLOG(void)
 	 * starting checkpoint, and sets InRecovery and ArchiveRecoveryRequested.
 	 * It also applies the tablespace map file, if any.
 	 */
+puts("# StartupXLOG:007 about to call InitWalRecovery()"); 
 	InitWalRecovery(ControlFile, &wasShutdown,
 					&haveBackupLabel, &haveTblspcMap);
+puts("# StartupXLOG:008 InitWalRecovery() done"); 
 	checkPoint = ControlFile->checkPointCopy;
 
 	/* initialize shared memory variables from the checkpoint record */
+puts("# StartupXLOG:009 setting TransamVariables"); 
 	TransamVariables->nextXid = checkPoint.nextXid;
 	TransamVariables->nextOid = checkPoint.nextOid;
 	TransamVariables->oidCount = 0;
+puts("# StartupXLOG:010 calling MultiXactSetNextMXact"); 
 	MultiXactSetNextMXact(checkPoint.nextMulti, checkPoint.nextMultiOffset);
+puts("# StartupXLOG:011 calling AdvanceOldestClogXid"); 
 	AdvanceOldestClogXid(checkPoint.oldestXid);
+puts("# StartupXLOG:012 calling SetTransactionIdLimit"); 
 	SetTransactionIdLimit(checkPoint.oldestXid, checkPoint.oldestXidDB);
+puts("# StartupXLOG:013 calling SetMultiXactIdLimit"); 
 	SetMultiXactIdLimit(checkPoint.oldestMulti, checkPoint.oldestMultiDB, true);
+puts("# StartupXLOG:014 calling SetCommitTsLimit"); 
 	SetCommitTsLimit(checkPoint.oldestCommitTsXid,
 					 checkPoint.newestCommitTsXid);
 	XLogCtl->ckptFullXid = checkPoint.nextXid;
+puts("# StartupXLOG:015 shared memory vars initialized"); 
 
 	/*
-	 * Clear out any old relcache cache files.  This is *necessary* if we do
-	 * any WAL replay, since that would probably result in the cache files
-	 * being out of sync with database reality.  In theory we could leave them
-	 * in place if the database had been cleanly shut down, but it seems
-	 * safest to just remove them always and let them be rebuilt during the
-	 * first backend startup.  These files needs to be removed from all
-	 * directories including pg_tblspc, however the symlinks are created only
-	 * after reading tablespace_map file in case of archive recovery from
-	 * backup, so needs to clear old relcache files here after creating
-	 * symlinks.
+	 * Clear out any old relcache cache files.
 	 */
+puts("# StartupXLOG:016 calling RelationCacheInitFileRemove()"); 
 	RelationCacheInitFileRemove();
+puts("# StartupXLOG:017 RelationCacheInitFileRemove() done"); 
 
 	/*
 	 * Initialize replication slots, before there's a chance to remove
 	 * required resources.
 	 */
+puts("# StartupXLOG:018 calling StartupReplicationSlots()"); 
 	StartupReplicationSlots();
+puts("# StartupXLOG:019 StartupReplicationSlots() done"); 
 
 	/*
 	 * Startup logical state, needs to be setup now so we have proper data
 	 * during crash recovery.
 	 */
+puts("# StartupXLOG:020 calling StartupReorderBuffer()"); 
 	StartupReorderBuffer();
+puts("# StartupXLOG:021 StartupReorderBuffer() done"); 
 
 	/*
 	 * Startup CLOG. This must be done after TransamVariables->nextXid has
 	 * been initialized and before we accept connections or begin WAL replay.
 	 */
+puts("# StartupXLOG:022 calling StartupCLOG()"); 
 	StartupCLOG();
+puts("# StartupXLOG:023 StartupCLOG() done"); 
 
 	/*
 	 * Startup MultiXact. We need to do this early to be able to replay
 	 * truncations.
 	 */
+puts("# StartupXLOG:024 calling StartupMultiXact()"); 
 	StartupMultiXact();
+puts("# StartupXLOG:025 StartupMultiXact() done"); 
 
 	/*
-	 * Ditto for commit timestamps.  Activate the facility if the setting is
-	 * enabled in the control file, as there should be no tracking of commit
-	 * timestamps done when the setting was disabled.  This facility can be
-	 * started or stopped when replaying a XLOG_PARAMETER_CHANGE record.
+	 * Ditto for commit timestamps.
 	 */
+puts("# StartupXLOG:026 checking track_commit_timestamp"); 
 	if (ControlFile->track_commit_timestamp)
 		StartupCommitTs();
+puts("# StartupXLOG:027 commit timestamp check done"); 
 
 	/*
 	 * Recover knowledge about replay progress of known replication partners.
 	 */
+puts("# StartupXLOG:028 calling StartupReplicationOrigin()"); 
 	StartupReplicationOrigin();
+puts("# StartupXLOG:029 StartupReplicationOrigin() done"); 
 
 	/*
 	 * Initialize unlogged LSN. On a clean shutdown, it's restored from the
 	 * control file. On recovery, all unlogged relations are blown away, so
 	 * the unlogged LSN counter can be reset too.
 	 */
+puts("# StartupXLOG:030 initializing unloggedLSN"); 
 	if (ControlFile->state == DB_SHUTDOWNED)
 		pg_atomic_write_membarrier_u64(&XLogCtl->unloggedLSN,
 									   ControlFile->unloggedLSN);
 	else
 		pg_atomic_write_membarrier_u64(&XLogCtl->unloggedLSN,
 									   FirstNormalUnloggedLSN);
+puts("# StartupXLOG:031 unloggedLSN initialized"); 
 
 	/*
-	 * Copy any missing timeline history files between 'now' and the recovery
-	 * target timeline from archive to pg_wal. While we don't need those files
-	 * ourselves - the history file of the recovery target timeline covers all
-	 * the previous timelines in the history too - a cascading standby server
-	 * might be interested in them. Or, if you archive the WAL from this
-	 * server to a different archive than the primary, it'd be good for all
-	 * the history files to get archived there after failover, so that you can
-	 * use one of the old timelines as a PITR target. Timeline history files
-	 * are small, so it's better to copy them unnecessarily than not copy them
-	 * and regret later.
+	 * Copy any missing timeline history files
 	 */
+puts("# StartupXLOG:032 calling restoreTimeLineHistoryFiles()"); 
 	restoreTimeLineHistoryFiles(checkPoint.ThisTimeLineID, recoveryTargetTLI);
+puts("# StartupXLOG:033 restoreTimeLineHistoryFiles() done"); 
 
 	/*
-	 * Before running in recovery, scan pg_twophase and fill in its status to
-	 * be able to work on entries generated by redo.  Doing a scan before
-	 * taking any recovery action has the merit to discard any 2PC files that
-	 * are newer than the first record to replay, saving from any conflicts at
-	 * replay.  This avoids as well any subsequent scans when doing recovery
-	 * of the on-disk two-phase data.
+	 * Before running in recovery, scan pg_twophase
 	 */
+puts("# StartupXLOG:034 calling restoreTwoPhaseData()"); 
 	restoreTwoPhaseData();
+puts("# StartupXLOG:035 restoreTwoPhaseData() done"); 
 
 	/*
 	 * When starting with crash recovery, reset pgstat data - it might not be
@@ -5717,19 +5730,24 @@ StartupXLOG(void)
 	 * TODO: With a bit of extra work we could just start with a pgstat file
 	 * associated with the checkpoint redo location we're starting from.
 	 */
+puts("# StartupXLOG:036 pgstat handling"); 
 	if (didCrash)
 		pgstat_discard_stats();
 	else
 		pgstat_restore_stats();
+puts("# StartupXLOG:037 pgstat done"); 
 
 	lastFullPageWrites = checkPoint.fullPageWrites;
 
 	RedoRecPtr = XLogCtl->RedoRecPtr = XLogCtl->Insert.RedoRecPtr = checkPoint.redo;
 	doPageWrites = lastFullPageWrites;
+puts("# StartupXLOG:038 RedoRecPtr set"); 
 
 	/* REDO */
+printf("# StartupXLOG:039 InRecovery=%d\n", InRecovery); 
 	if (InRecovery)
 	{
+puts("# StartupXLOG:040 entering InRecovery block"); 
 		/* Initialize state for RecoveryInProgress() */
 		SpinLockAcquire(&XLogCtl->info_lck);
 		if (InArchiveRecovery)
@@ -5885,24 +5903,32 @@ StartupXLOG(void)
 		 */
 		PerformWalRecovery();
 		performedWalRecovery = true;
+puts("# StartupXLOG:041 InRecovery block done"); 
 	}
 	else
+	{
+puts("# StartupXLOG:042 InRecovery=false, skipping recovery"); 
 		performedWalRecovery = false;
+	}
 
 	/*
 	 * Finish WAL recovery.
 	 */
+puts("# StartupXLOG:043 calling FinishWalRecovery()"); 
 	endOfRecoveryInfo = FinishWalRecovery();
+puts("# StartupXLOG:044 FinishWalRecovery() done"); 
 	EndOfLog = endOfRecoveryInfo->endOfLog;
 	EndOfLogTLI = endOfRecoveryInfo->endOfLogTLI;
 	abortedRecPtr = endOfRecoveryInfo->abortedRecPtr;
 	missingContrecPtr = endOfRecoveryInfo->missingContrecPtr;
+puts("# StartupXLOG:045 endOfRecoveryInfo vars set"); 
 
 	/*
-	 * Reset ps status display, so as no information related to recovery shows
-	 * up.
+	 * Reset ps status display
 	 */
+puts("# StartupXLOG:046 calling set_ps_display()"); 
 	set_ps_display("");
+puts("# StartupXLOG:047 set_ps_display() done"); 
 
 	/*
 	 * When recovering from a backup (we are in recovery, and archive recovery
@@ -5947,43 +5973,33 @@ StartupXLOG(void)
 	}
 
 	/*
-	 * Reset unlogged relations to the contents of their INIT fork. This is
-	 * done AFTER recovery is complete so as to include any unlogged relations
-	 * created during recovery, but BEFORE recovery is marked as having
-	 * completed successfully. Otherwise we'd not retry if any of the post
-	 * end-of-recovery steps fail.
+	 * Reset unlogged relations
 	 */
+puts("# StartupXLOG:048 checking InRecovery for unlogged relations"); 
 	if (InRecovery)
 		ResetUnloggedRelations(UNLOGGED_RELATION_INIT);
+puts("# StartupXLOG:049 unlogged relations check done"); 
 
 	/*
-	 * Pre-scan prepared transactions to find out the range of XIDs present.
-	 * This information is not quite needed yet, but it is positioned here so
-	 * as potential problems are detected before any on-disk change is done.
+	 * Pre-scan prepared transactions
 	 */
+puts("# StartupXLOG:050 calling PrescanPreparedTransactions()"); 
 	oldestActiveXID = PrescanPreparedTransactions(NULL, NULL);
+puts("# StartupXLOG:051 PrescanPreparedTransactions() done"); 
 
 	/*
-	 * Allow ordinary WAL segment creation before possibly switching to a new
-	 * timeline, which creates a new segment, and after the last ReadRecord().
+	 * Allow ordinary WAL segment creation
 	 */
+puts("# StartupXLOG:052 calling SetInstallXLogFileSegmentActive()"); 
 	SetInstallXLogFileSegmentActive();
+puts("# StartupXLOG:053 SetInstallXLogFileSegmentActive() done"); 
 
 	/*
 	 * Consider whether we need to assign a new timeline ID.
-	 *
-	 * If we did archive recovery, we always assign a new ID.  This handles a
-	 * couple of issues.  If we stopped short of the end of WAL during
-	 * recovery, then we are clearly generating a new timeline and must assign
-	 * it a unique new ID.  Even if we ran to the end, modifying the current
-	 * last segment is problematic because it may result in trying to
-	 * overwrite an already-archived copy of that segment, and we encourage
-	 * DBAs to make their archive_commands reject that.  We can dodge the
-	 * problem by making the new active segment have a new timeline ID.
-	 *
-	 * In a normal crash recovery, we can just extend the timeline we were in.
 	 */
+puts("# StartupXLOG:054 timeline ID handling"); 
 	newTLI = endOfRecoveryInfo->lastRecTLI;
+printf("# StartupXLOG:055 ArchiveRecoveryRequested=%d\n", ArchiveRecoveryRequested); 
 	if (ArchiveRecoveryRequested)
 	{
 		newTLI = findNewestTimeLine(recoveryTargetTLI) + 1;
@@ -6025,10 +6041,12 @@ StartupXLOG(void)
 	}
 
 	/* Save the selected TimeLineID in shared memory, too */
+puts("# StartupXLOG:056 saving TimeLineID to shared memory"); 
 	SpinLockAcquire(&XLogCtl->info_lck);
 	XLogCtl->InsertTimeLineID = newTLI;
 	XLogCtl->PrevTimeLineID = endOfRecoveryInfo->lastRecTLI;
 	SpinLockRelease(&XLogCtl->info_lck);
+puts("# StartupXLOG:057 TimeLineID saved"); 
 
 	/*
 	 * Actually, if WAL ended in an incomplete record, skip the parts that
@@ -6051,19 +6069,18 @@ StartupXLOG(void)
 	}
 
 	/*
-	 * Prepare to write WAL starting at EndOfLog location, and init xlog
-	 * buffer cache using the block containing the last record from the
-	 * previous incarnation.
+	 * Prepare to write WAL starting at EndOfLog location
 	 */
+puts("# StartupXLOG:058 preparing Insert structure"); 
 	Insert = &XLogCtl->Insert;
 	Insert->PrevBytePos = XLogRecPtrToBytePos(endOfRecoveryInfo->lastRec);
 	Insert->CurrBytePos = XLogRecPtrToBytePos(EndOfLog);
+puts("# StartupXLOG:059 Insert structure ready"); 
 
 	/*
-	 * Tricky point here: lastPage contains the *last* block that the LastRec
-	 * record spans, not the one it starts in.  The last block is indeed the
-	 * one we want to use.
+	 * Tricky point here: lastPage handling
 	 */
+puts("# StartupXLOG:060 checking EndOfLog alignment"); 
 	if (EndOfLog % XLOG_BLCKSZ != 0)
 	{
 		char	   *page;
@@ -6093,15 +6110,16 @@ StartupXLOG(void)
 	}
 
 	/*
-	 * Update local and shared status.  This is OK to do without any locks
-	 * because no other process can be reading or writing WAL yet.
+	 * Update local and shared status.
 	 */
+puts("# StartupXLOG:061 updating LogwrtResult"); 
 	LogwrtResult.Write = LogwrtResult.Flush = EndOfLog;
 	pg_atomic_write_u64(&XLogCtl->logInsertResult, EndOfLog);
 	pg_atomic_write_u64(&XLogCtl->logWriteResult, EndOfLog);
 	pg_atomic_write_u64(&XLogCtl->logFlushResult, EndOfLog);
 	XLogCtl->LogwrtRqst.Write = EndOfLog;
 	XLogCtl->LogwrtRqst.Flush = EndOfLog;
+puts("# StartupXLOG:062 LogwrtResult updated"); 
 
 	/*
 	 * Invalidate all sinval-managed caches before READ WRITE transactions
@@ -6125,90 +6143,129 @@ StartupXLOG(void)
 	 * the missing invalidations.  This avoided changing the WAL format in
 	 * back branches.
 	 */
+puts("# StartupXLOG:063 calling SIResetAll()"); 
 	SIResetAll();
+puts("# StartupXLOG:064 SIResetAll() done"); 
 
 	/*
 	 * Preallocate additional log files, if wanted.
 	 */
+puts("# StartupXLOG:065 calling PreallocXlogFiles()"); 
 	PreallocXlogFiles(EndOfLog, newTLI);
+puts("# StartupXLOG:066 PreallocXlogFiles() done"); 
 
 	/*
 	 * Okay, we're officially UP.
 	 */
+puts("# StartupXLOG:067 setting InRecovery=false"); 
 	InRecovery = false;
 
 	/* start the archive_timeout timer and LSN running */
+puts("# StartupXLOG:068 setting lastSegSwitch"); 
 	XLogCtl->lastSegSwitchTime = (pg_time_t) time(NULL);
 	XLogCtl->lastSegSwitchLSN = EndOfLog;
 
 	/* also initialize latestCompletedXid, to nextXid - 1 */
+puts("# StartupXLOG:069 LWLockAcquire(ProcArrayLock)"); 
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 	TransamVariables->latestCompletedXid = TransamVariables->nextXid;
 	FullTransactionIdRetreat(&TransamVariables->latestCompletedXid);
 	LWLockRelease(ProcArrayLock);
+puts("# StartupXLOG:070 ProcArrayLock released"); 
 
 	/*
-	 * Start up subtrans, if not already done for hot standby.  (commit
-	 * timestamps are started below, if necessary.)
+	 * Start up subtrans
 	 */
+puts("# StartupXLOG:071 checking standbyState for SUBTRANS"); 
 	if (standbyState == STANDBY_DISABLED)
 		StartupSUBTRANS(oldestActiveXID);
+puts("# StartupXLOG:072 SUBTRANS check done"); 
 
 	/*
-	 * Perform end of recovery actions for any SLRUs that need it.
+	 * Perform end of recovery actions for any SLRUs
 	 */
+puts("# StartupXLOG:073 calling TrimCLOG()"); 
 	TrimCLOG();
+puts("# StartupXLOG:074 calling TrimMultiXact()"); 
 	TrimMultiXact();
+puts("# StartupXLOG:075 SLRU trim done"); 
 
 	/*
-	 * Reload shared-memory state for prepared transactions.  This needs to
-	 * happen before renaming the last partial segment of the old timeline as
-	 * it may be possible that we have to recovery some transactions from it.
+	 * Reload prepared transactions
 	 */
+puts("# StartupXLOG:076 calling RecoverPreparedTransactions()"); 
 	RecoverPreparedTransactions();
+puts("# StartupXLOG:077 RecoverPreparedTransactions() done"); 
 
 	/* Shut down xlogreader */
+puts("# StartupXLOG:078 calling ShutdownWalRecovery()"); 
 	ShutdownWalRecovery();
+puts("# StartupXLOG:079 ShutdownWalRecovery() done"); 
 
 	/* Enable WAL writes for this backend only. */
+puts("# StartupXLOG:080 calling LocalSetXLogInsertAllowed()"); 
 	LocalSetXLogInsertAllowed();
+puts("# StartupXLOG:081 LocalSetXLogInsertAllowed() done"); 
 
 	/* If necessary, write overwrite-contrecord before doing anything else */
+puts("# StartupXLOG:082 checking abortedRecPtr"); 
 	if (!XLogRecPtrIsInvalid(abortedRecPtr))
 	{
+puts("# StartupXLOG:082a creating overwrite contrecord"); 
 		Assert(!XLogRecPtrIsInvalid(missingContrecPtr));
 		CreateOverwriteContrecordRecord(abortedRecPtr, missingContrecPtr, newTLI);
+puts("# StartupXLOG:082b overwrite contrecord done"); 
 	}
+puts("# StartupXLOG:083 abortedRecPtr check done"); 
 
 	/*
 	 * Update full_page_writes in shared memory and write an XLOG_FPW_CHANGE
 	 * record before resource manager writes cleanup WAL records or checkpoint
 	 * record is written.
 	 */
+puts("# StartupXLOG:084 setting Insert->fullPageWrites"); 
 	Insert->fullPageWrites = lastFullPageWrites;
+puts("# StartupXLOG:085 calling UpdateFullPageWrites()"); 
 	UpdateFullPageWrites();
+puts("# StartupXLOG:086 UpdateFullPageWrites() done"); 
 
 	/*
 	 * Emit checkpoint or end-of-recovery record in XLOG, if required.
 	 */
+printf("# StartupXLOG:087 performedWalRecovery=%d\n", performedWalRecovery); 
 	if (performedWalRecovery)
+	{
+puts("# StartupXLOG:087a calling PerformRecoveryXLogAction()"); 
 		promoted = PerformRecoveryXLogAction();
+puts("# StartupXLOG:087b PerformRecoveryXLogAction() done"); 
+	}
+puts("# StartupXLOG:088 recovery xlog action check done"); 
 
 	/*
 	 * If any of the critical GUCs have changed, log them before we allow
 	 * backends to write WAL.
 	 */
+puts("# StartupXLOG:089 calling XLogReportParameters()"); 
 	XLogReportParameters();
+puts("# StartupXLOG:090 XLogReportParameters() done"); 
 
 	/* If this is archive recovery, perform post-recovery cleanup actions. */
+printf("# StartupXLOG:091 ArchiveRecoveryRequested=%d\n", ArchiveRecoveryRequested); 
 	if (ArchiveRecoveryRequested)
+	{
+puts("# StartupXLOG:091a calling CleanupAfterArchiveRecovery()"); 
 		CleanupAfterArchiveRecovery(EndOfLogTLI, EndOfLog, newTLI);
+puts("# StartupXLOG:091b CleanupAfterArchiveRecovery() done"); 
+	}
+puts("# StartupXLOG:092 archive recovery cleanup check done"); 
 
 	/*
 	 * Local WAL inserts enabled, so it's time to finish initialization of
 	 * commit timestamp.
 	 */
+puts("# StartupXLOG:093 calling CompleteCommitTsInitialization()"); 
 	CompleteCommitTsInitialization();
+puts("# StartupXLOG:094 CompleteCommitTsInitialization() done"); 
 
 	/*
 	 * All done with end-of-recovery actions.
@@ -6225,15 +6282,22 @@ StartupXLOG(void)
 	 * there are no race conditions concerning visibility of other recent
 	 * updates to shared memory.
 	 */
+puts("# StartupXLOG:095 acquiring ControlFileLock"); 
 	LWLockAcquire(ControlFileLock, LW_EXCLUSIVE);
+puts("# StartupXLOG:096 ControlFileLock acquired"); 
 	ControlFile->state = DB_IN_PRODUCTION;
+puts("# StartupXLOG:097 state set to DB_IN_PRODUCTION"); 
 
 	SpinLockAcquire(&XLogCtl->info_lck);
 	XLogCtl->SharedRecoveryState = RECOVERY_STATE_DONE;
 	SpinLockRelease(&XLogCtl->info_lck);
+puts("# StartupXLOG:098 SharedRecoveryState set to DONE"); 
 
+puts("# StartupXLOG:099 calling UpdateControlFile()"); 
 	UpdateControlFile();
+puts("# StartupXLOG:100 UpdateControlFile() done"); 
 	LWLockRelease(ControlFileLock);
+puts("# StartupXLOG:101 ControlFileLock released"); 
 
 	/*
 	 * Shutdown the recovery environment.  This must occur after
@@ -6244,14 +6308,22 @@ StartupXLOG(void)
 	 * particularly critical for prepared 2PC transactions, that would still
 	 * need to be included in snapshots once recovery has ended.
 	 */
+printf("# StartupXLOG:102 standbyState=%d\n", standbyState); 
 	if (standbyState != STANDBY_DISABLED)
+	{
+puts("# StartupXLOG:102a calling ShutdownRecoveryTransactionEnvironment()"); 
 		ShutdownRecoveryTransactionEnvironment();
+puts("# StartupXLOG:102b ShutdownRecoveryTransactionEnvironment() done"); 
+	}
+puts("# StartupXLOG:103 recovery env shutdown check done"); 
 
 	/*
 	 * If there were cascading standby servers connected to us, nudge any wal
 	 * sender processes to notice that we've been promoted.
 	 */
+puts("# StartupXLOG:104 calling WalSndWakeup()"); 
 	WalSndWakeup(true, true);
+puts("# StartupXLOG:105 WalSndWakeup() done"); 
 
 	/*
 	 * If this was a promotion, request an (online) checkpoint now. This isn't
@@ -6259,8 +6331,14 @@ StartupXLOG(void)
 	 * and in case of a crash, recovering from it might take a longer than is
 	 * appropriate now that we're not in standby mode anymore.
 	 */
+printf("# StartupXLOG:106 promoted=%d\n", promoted); 
 	if (promoted)
+	{
+puts("# StartupXLOG:106a calling RequestCheckpoint()"); 
 		RequestCheckpoint(CHECKPOINT_FORCE);
+puts("# StartupXLOG:106b RequestCheckpoint() done"); 
+	}
+puts("# StartupXLOG:107 StartupXLOG() COMPLETE - returning"); 
 }
 
 /*

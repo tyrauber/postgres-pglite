@@ -414,40 +414,47 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 		elog(ERROR, "backend is incorrectly linked to frontend functions");
 
 	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, 0, NULL);
+puts("[pgl_boot] 001: InitPostgres returned"); 
 
 	/* Initialize stuff for bootstrap-file processing */
+puts("[pgl_boot] 002: initializing attrtypes array"); 
 	for (i = 0; i < MAXATTR; i++)
 	{
 		attrtypes[i] = NULL;
 		Nulls[i] = false;
 	}
-	fprintf(stderr, "[pgl_boot] after bootstrap-file processing init\n");
+puts("[pgl_boot] 003: attrtypes array initialized"); 
 
 
 	/*
 	 * Process bootstrap input.
 	 */
+puts("[pgl_boot] 004: calling StartTransactionCommand()"); 
 	StartTransactionCommand();
-	fprintf(stderr, "[pgl_boot] after StartTransactionCommand\n");
+puts("[pgl_boot] 005: StartTransactionCommand() done"); 
 
+puts("[pgl_boot] 006: calling boot_yyparse()"); 
 	boot_yyparse();
-	fprintf(stderr, "[pgl_boot] after boot_yyparse\n");
+puts("[pgl_boot] 007: boot_yyparse() done"); 
+puts("[pgl_boot] 008: calling CommitTransactionCommand()"); 
 	CommitTransactionCommand();
-	fprintf(stderr, "[pgl_boot] after CommitTransactionCommand\n");
+puts("[pgl_boot] 009: CommitTransactionCommand() done"); 
 
 	/*
 	 * We should now know about all mapped relations, so it's okay to write
 	 * out the initial relation mapping files.
 	 */
+puts("[pgl_boot] 010: calling RelationMapFinishBootstrap()"); 
 	RelationMapFinishBootstrap();
-	fprintf(stderr, "[pgl_boot] after RelationMapFinishBootstrap\n");
+puts("[pgl_boot] 011: RelationMapFinishBootstrap() done"); 
 
 	/* Clean up and exit */
+puts("[pgl_boot] 012: calling cleanup()"); 
 	cleanup();
-	fprintf(stderr, "[pgl_boot] after cleanup\n");
+puts("[pgl_boot] 013: cleanup() done"); 
 #if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
 #if defined(PGL_MOBILE)
-	fprintf(stderr, "[pgl_boot] returning nothing on mobile\n");
+puts("[pgl_boot] 014: returning (mobile)"); 
 	return;
 #else
 	proc_exit(0);

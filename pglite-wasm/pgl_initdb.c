@@ -72,23 +72,35 @@ static int find_other_exec_mobile(const char *argv0, const char *target, const c
 
 static void get_share_path_mobile(const char *my_exec_path, char *ret_path) {
     (void)my_exec_path;
-    const char* conf = getenv("PGSYSCONFDIR");
+    /*
+     * Priority order for initdb share path resolution:
+     * 1. PREFIX - explicit app prefix (set by test harness or pglite-daemon)
+     * 2. IOS_RUNTIME_DIR / ANDROID_RUNTIME_DIR - mobile runtime bundles
+     * 3. PGSYSCONFDIR - legacy; BUT exec.c auto-sets this to PREFIX/etc via
+     *    get_etc_path(), so we must check PREFIX first to avoid the wrong path.
+     * 4. Fallback to /data/local/tmp/pglite
+     *
+     * NOTE: PGSYSCONFDIR is checked last because set_pglocale_pgservice()
+     * (called early in initdb) auto-sets it to <exec_dir>/../etc which
+     * does NOT contain share/postgresql.
+     */
+    const char* prefix = getenv("PREFIX");
+    if (prefix && *prefix) {
+        snprintf(ret_path, MAXPGPATH, "%s/share/postgresql", prefix);
+        return;
+    }
 #ifdef __APPLE__
     const char* runtime = getenv("IOS_RUNTIME_DIR");
 #else
     const char* runtime = getenv("ANDROID_RUNTIME_DIR");
 #endif
-    // Candidates in order: PGSYSCONFDIR/share/postgresql, runtime/share/postgresql, runtime/postgresql
-    if (conf && *conf) {
-        snprintf(ret_path, MAXPGPATH, "%s/share/postgresql", conf);
+    if (runtime && *runtime) {
+        snprintf(ret_path, MAXPGPATH, "%s/share/postgresql", runtime);
         return;
     }
-    if (runtime && *runtime) {
-        // Prefer share/postgresql but accept postgresql fallback
-        char cand[MAXPGPATH];
-        snprintf(cand, sizeof(cand), "%s/share/postgresql", runtime);
-        // Don't check for existence here; initdb will validate inputs shortly
-        snprintf(ret_path, MAXPGPATH, "%s", cand);
+    const char* conf = getenv("PGSYSCONFDIR");
+    if (conf && *conf) {
+        snprintf(ret_path, MAXPGPATH, "%s/share/postgresql", conf);
         return;
     }
     // Last resort

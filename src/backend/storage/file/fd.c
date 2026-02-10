@@ -240,6 +240,18 @@ static uint64 temporary_files_size = 0;
 static bool temporary_files_allowed = false;
 #endif
 
+#ifdef PGL_MOBILE
+/*
+ * Flag to track whether InitFileAccess has been called in the current session.
+ * This prevents the VFD cache reset from happening multiple times when
+ * BaseInit() is called more than once during initialization.
+ *
+ * The reset is only needed on TRUE app restart (when file descriptors are stale),
+ * not on subsequent BaseInit() calls within the same session.
+ */
+static bool vfd_initialized_this_session = false;
+#endif
+
 /*
  * List of OS handles opened with AllocateFile, AllocateDir and
  * OpenTransientFile.
@@ -909,27 +921,34 @@ void
 InitFileAccess(void)
 {
 #ifdef PGL_MOBILE
-	fprintf(stderr, "[InitFileAccess] ENTRY SizeVfdCache=%zu VfdCache=%p\n",
-			SizeVfdCache, (void*)VfdCache);
-	fflush(stderr);
+	/*
+	 * MOBILE: Handle multiple BaseInit() calls within the same session.
+	 *
+	 * BaseInit() may be called multiple times during initialization
+	 * (e.g., RePostgresSingleUserMain then AsyncPostgresSingleUserMain).
+	 * Only reset on TRUE app restart (first call), not subsequent calls.
+	 */
+	if (vfd_initialized_this_session)
+	{
+		/* Verify cache is in valid state */
+		if (SizeVfdCache == 0 || VfdCache == NULL)
+		{
+			fprintf(stderr, "[InitFileAccess] WARNING: cache unexpectedly empty after init\n");
+			/* Fall through to reinitialize */
+		}
+		else
+		{
+			return;
+		}
+	}
 
 	/*
-	 * MOBILE FIX: Reset VFD cache if it was already initialized.
-	 *
-	 * On mobile platforms, the backend may be re-initialized in the same process
-	 * (e.g., after app restart). If the VFD cache already exists, it may have
-	 * stale entries with invalid file descriptors and garbage pointers.
-	 *
-	 * We need to free the old cache and start fresh. We can't properly close
-	 * any files because the file descriptors are invalid in the new session.
+	 * First call in this session. Reset stale VFD cache from previous app
+	 * session — file descriptors are invalid after app restart.
 	 */
 	if (SizeVfdCache > 0 || VfdCache != NULL)
 	{
-		fprintf(stderr, "[InitFileAccess] MOBILE: Resetting stale VFD cache (SizeVfdCache=%zu)\n",
-				SizeVfdCache);
-		fflush(stderr);
-		
-		/* Free the old VFD cache - don't try to close files, they're invalid */
+		/* Free old VFD cache without closing files (handles are invalid) */
 		if (VfdCache != NULL)
 		{
 			free(VfdCache);
@@ -938,10 +957,9 @@ InitFileAccess(void)
 		SizeVfdCache = 0;
 		nfile = 0;
 		have_xact_temporary_files = false;
-		
-		fprintf(stderr, "[InitFileAccess] MOBILE: VFD cache reset complete\n");
-		fflush(stderr);
 	}
+
+	vfd_initialized_this_session = true;
 #else
 	Assert(SizeVfdCache == 0);	/* call me only once */
 #endif
@@ -957,12 +975,6 @@ InitFileAccess(void)
 	VfdCache->fd = VFD_CLOSED;
 
 	SizeVfdCache = 1;
-
-#ifdef PGL_MOBILE
-	fprintf(stderr, "[InitFileAccess] EXIT SizeVfdCache=%zu VfdCache=%p\n",
-			SizeVfdCache, (void*)VfdCache);
-	fflush(stderr);
-#endif
 }
 
 /*

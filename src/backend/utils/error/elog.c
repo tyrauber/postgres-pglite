@@ -613,7 +613,28 @@ errfinish(const char *filename, int lineno, const char *funcname)
 		 * children...
 		 */
 		fflush(NULL);
+#if defined(PGL_MOBILE)
+		/*
+		 * On mobile platforms (iOS/Android), we cannot call abort() because
+		 * PostgreSQL runs in-process as a library. Calling abort() would
+		 * terminate the entire host app.
+		 *
+		 * Instead, we log the panic and attempt to return. The caller
+		 * (interactive_one or similar) should check for errors and handle
+		 * gracefully. This isn't ideal but is better than crashing the app.
+		 *
+		 * Note: This means PANIC errors become "soft" on mobile - they won't
+		 * crash the app but the database state may be inconsistent.
+		 */
+		fprintf(stderr, "[elog] PANIC on mobile - NOT calling abort(), returning instead\n");
+		proc_exit_inprogress = true;
+		return;
+#elif defined(__EMSCRIPTEN__) || defined(__wasi__)
+		puts("# PANIC on WASM - NOT calling abort()\r\n");
+		return;
+#else
 		abort();
+#endif
 	}
 
 	/*

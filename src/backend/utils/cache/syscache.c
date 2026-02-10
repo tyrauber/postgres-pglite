@@ -111,9 +111,11 @@ InitCatalogCache(void)
 {
 	int			cacheId;
 
+puts("[InitCatalogCache] 001: entered");
 	Assert(!CacheInitialized);
 
 	SysCacheRelationOidSize = SysCacheSupportingRelOidSize = 0;
+puts("[InitCatalogCache] 002: starting loop");
 
 	for (cacheId = 0; cacheId < SysCacheSize; cacheId++)
 	{
@@ -144,24 +146,29 @@ InitCatalogCache(void)
 		/* see comments for RelationInvalidatesSnapshotsOnly */
 		Assert(!RelationInvalidatesSnapshotsOnly(cacheinfo[cacheId].reloid));
 	}
+puts("[InitCatalogCache] 003: loop done");
 
 	Assert(SysCacheRelationOidSize <= lengthof(SysCacheRelationOid));
 	Assert(SysCacheSupportingRelOidSize <= lengthof(SysCacheSupportingRelOid));
 
 	/* Sort and de-dup OID arrays, so we can use binary search. */
+puts("[InitCatalogCache] 004: calling qsort");
 	qsort(SysCacheRelationOid, SysCacheRelationOidSize,
 		  sizeof(Oid), oid_compare);
 	SysCacheRelationOidSize =
 		qunique(SysCacheRelationOid, SysCacheRelationOidSize, sizeof(Oid),
 				oid_compare);
+puts("[InitCatalogCache] 005: first qsort done");
 
 	qsort(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize,
 		  sizeof(Oid), oid_compare);
 	SysCacheSupportingRelOidSize =
 		qunique(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize,
 				sizeof(Oid), oid_compare);
+puts("[InitCatalogCache] 006: second qsort done");
 
 	CacheInitialized = true;
+puts("[InitCatalogCache] 007: complete");
 }
 
 /*

@@ -215,6 +215,8 @@ interactive_file() {
 void
 RePostgresSingleUserMain(int single_argc, char *single_argv[], const char *username)
 {
+    fprintf(stderr, "[RePostgresSingleUserMain] R001: ENTRY username=%s\n", username ? username : "NULL");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] ENTRY - username=%s", username ? username : "NULL");
     debug_log_wal_state("PRE-SINGLE-USER");
@@ -222,20 +224,30 @@ RePostgresSingleUserMain(int single_argc, char *single_argv[], const char *usern
 #if PGDEBUG
 printf("# 123: RePostgresSingleUserMain progname=%s for %s feed=%s\n", progname, single_argv[0], IDB_PIPE_SINGLE);
 #endif
-    // On mobile, the single-user script is emitted under PREFIX/runtime
+    // On mobile, the single-user script is emitted under PGDATA by pgl_popen (pgl_os.h)
     char idb_single_path[1024];
+#ifdef PGL_MOBILE
+    extern void pgl_get_pipe_path(int stage, char *out, size_t outsz);
+    pgl_get_pipe_path(1, idb_single_path, sizeof(idb_single_path));
+#else
     snprintf(idb_single_path, sizeof(idb_single_path), "%s/initdb.single.txt", PREFIX ? (const char*)PREFIX : WASM_PREFIX);
+#endif
+    fprintf(stderr, "[RePostgresSingleUserMain] R002: Looking for single script at: %s\n", idb_single_path);
+    fflush(stderr);
 #ifdef PGL_MOBILE
     debug_log_file_state(idb_single_path, "initdb.single.txt");
 #endif
     single_mode_feed = fopen(idb_single_path, "r");
     if (!single_mode_feed) {
-        fprintf(stderr, "[pgl_single] failed to open %s (errno=%d)\n", idb_single_path, errno);
+        fprintf(stderr, "[RePostgresSingleUserMain] R003: No single script found (errno=%d), returning early\n", errno);
+        fflush(stderr);
 #ifdef PGL_MOBILE
         PGL_LOG_INFO("[RePostgresSingleUserMain] No single-user script found, skipping replay");
 #endif
         return; // nothing to replay; continue to backend startup
     }
+    fprintf(stderr, "[RePostgresSingleUserMain] R004: Opened single script successfully\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] Opened single-user script: %s", idb_single_path);
 #endif
@@ -254,7 +266,11 @@ printf("# 123: RePostgresSingleUserMain progname=%s for %s feed=%s\n", progname,
     fputc('\n', stderr);
 
     /* Parse command-line options. */
+    fprintf(stderr, "[RePostgresSingleUserMain] R005: Calling process_postgres_switches()\n");
+    fflush(stderr);
     process_postgres_switches(single_argc, single_argv, PGC_POSTMASTER, &dbname);
+    fprintf(stderr, "[RePostgresSingleUserMain] R006: process_postgres_switches() done, dbname=%s\n", dbname ? dbname : "NULL");
+    fflush(stderr);
 #if PGDEBUG
 printf("# 134: dbname=%s\n", dbname);
 #endif
@@ -266,49 +282,89 @@ printf("# 134: dbname=%s\n", dbname);
         fprintf(stderr, "[pgl_single] DataDir=%s PGDATA(env)=%s ctrl=%s rc=%d errno=%d size=%lld\n",
                 DataDir, getenv("PGDATA"), ctrl_path, rc, errno, (long long)((rc==0)?st.st_size:0));
     }
+    fprintf(stderr, "[RePostgresSingleUserMain] R007: Calling LocalProcessControlFile()\n");
+    fflush(stderr);
     LocalProcessControlFile(false);
+    fprintf(stderr, "[RePostgresSingleUserMain] R008: LocalProcessControlFile() done\n");
+    fflush(stderr);
 
+    fprintf(stderr, "[RePostgresSingleUserMain] R009: Calling process_shared_preload_libraries()\n");
+    fflush(stderr);
     process_shared_preload_libraries();
+    fprintf(stderr, "[RePostgresSingleUserMain] R010: process_shared_preload_libraries() done\n");
+    fflush(stderr);
 
     /* Initialize MaxBackends - required for shared memory sizing */
+    fprintf(stderr, "[RePostgresSingleUserMain] R011: Calling InitializeMaxBackends()\n");
+    fflush(stderr);
     InitializeMaxBackends();
+    fprintf(stderr, "[RePostgresSingleUserMain] R012: InitializeMaxBackends() done\n");
+    fflush(stderr);
 
 // ? IgnoreSystemIndexes = true;
 IgnoreSystemIndexes = false;
+    fprintf(stderr, "[RePostgresSingleUserMain] R013: Calling process_shmem_requests()\n");
+    fflush(stderr);
     process_shmem_requests();
+    fprintf(stderr, "[RePostgresSingleUserMain] R014: process_shmem_requests() done\n");
+    fflush(stderr);
 
+    fprintf(stderr, "[RePostgresSingleUserMain] R015: Calling InitializeShmemGUCs()\n");
+    fflush(stderr);
     InitializeShmemGUCs();
+    fprintf(stderr, "[RePostgresSingleUserMain] R016: InitializeShmemGUCs() done\n");
+    fflush(stderr);
 
+    fprintf(stderr, "[RePostgresSingleUserMain] R017: Calling InitializeWalConsistencyChecking()\n");
+    fflush(stderr);
     InitializeWalConsistencyChecking();
+    fprintf(stderr, "[RePostgresSingleUserMain] R018: InitializeWalConsistencyChecking() done\n");
+    fflush(stderr);
 
     /* CRITICAL: Initialize shared memory and semaphores.
      * This was missing and caused XLogCtl to be NULL, leading to crashes
      * in RecoveryInProgress() when accessing XLogCtl->SharedRecoveryState.
      * See: docs/issues/pglite-currentresourceowner-crash.md
      */
+    fprintf(stderr, "[RePostgresSingleUserMain] R019: Calling CreateSharedMemoryAndSemaphores()\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] About to CreateSharedMemoryAndSemaphores()");
 #endif
     CreateSharedMemoryAndSemaphores();
+    fprintf(stderr, "[RePostgresSingleUserMain] R020: CreateSharedMemoryAndSemaphores() done\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] CreateSharedMemoryAndSemaphores() completed");
 #endif
 
     PgStartTime = GetCurrentTimestamp();
+    fprintf(stderr, "[RePostgresSingleUserMain] R021: PgStartTime set\n");
+    fflush(stderr);
 
     /*
      * Create a per-backend PGPROC struct in shared memory. We must do this
      * before we can use LWLocks.
      */
+    fprintf(stderr, "[RePostgresSingleUserMain] R022: Calling InitProcess()\n");
+    fflush(stderr);
     InitProcess();
+    fprintf(stderr, "[RePostgresSingleUserMain] R023: InitProcess() done\n");
+    fflush(stderr);
 
     SetProcessingMode(InitProcessing);
+    fprintf(stderr, "[RePostgresSingleUserMain] R024: SetProcessingMode done\n");
+    fflush(stderr);
 
     /* Early initialization */
+    fprintf(stderr, "[RePostgresSingleUserMain] R025: Calling BaseInit()\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] About to call BaseInit()");
 #endif
     BaseInit();
+    fprintf(stderr, "[RePostgresSingleUserMain] R026: BaseInit() done\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] BaseInit() completed - WAL recovery may have occurred");
     debug_log_wal_state("POST-BASEINIT");
@@ -318,10 +374,68 @@ if (am_walsender)
     PDEBUG("# 155: am_walsender == true");
 //      BaseInit();
 
+#ifdef PGL_MOBILE
+    /*
+     * CRITICAL FIX: Set up PG_exception_stack BEFORE InitPostgres().
+     * 
+     * InitPostgres() calls StartupXLOG() which may perform WAL recovery.
+     * During WAL recovery, if any error occurs (e.g., mdwritev fails due to
+     * file I/O issues), PostgreSQL calls ereport(ERROR, ...) which uses
+     * PG_exception_stack to longjmp to an error handler.
+     * 
+     * Without this handler, PG_exception_stack is NULL and the error
+     * causes a crash (EXC_BREAKPOINT/SIGTRAP on iOS).
+     * 
+     * The pgl_sjlj.c include (which normally sets up PG_exception_stack)
+     * happens AFTER InitPostgres(), which is too late for errors during
+     * WAL recovery.
+     * 
+     * See: iOS crash in mdwritev.cold.1 during PerformWalRecovery
+     */
+    {
+        sigjmp_buf init_exception_buf;
+        
+        PGL_LOG_INFO("[RePostgresSingleUserMain] Setting up PG_exception_stack for InitPostgres");
+        
+        if (sigsetjmp(init_exception_buf, 1) != 0)
+        {
+            /* Error occurred during InitPostgres - we longjmp'd here */
+            PG_exception_stack = NULL;
+            error_context_stack = NULL;
+            
+            PGL_LOG_ERROR("[RePostgresSingleUserMain] ERROR during InitPostgres/WAL recovery!");
+            fprintf(stderr, "[RePostgresSingleUserMain] InitPostgres failed - error caught by exception handler\n");
+            
+            /* Try to clean up and report the error */
+            HOLD_INTERRUPTS();
+            EmitErrorReport();
+            FlushErrorState();
+            RESUME_INTERRUPTS();
+            
+            /* Cannot continue - InitPostgres failed */
+            fprintf(stderr, "[RePostgresSingleUserMain] FATAL: Cannot continue after InitPostgres failure\n");
+            return;
+        }
+        
+        /* Set up exception stack before InitPostgres */
+        PG_exception_stack = &init_exception_buf;
+        
+        InitPostgres(dbname, InvalidOid,	/* database to connect to */
+                     username, InvalidOid,	/* role to connect as */
+                     (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
+                     NULL);			/* no out_dbname */
+        
+        /* Clear exception stack - will be reset by pgl_sjlj.c later */
+        PG_exception_stack = NULL;
+        
+        PGL_LOG_INFO("[RePostgresSingleUserMain] InitPostgres completed successfully");
+    }
+#else
     InitPostgres(dbname, InvalidOid,	/* database to connect to */
                  username, InvalidOid,	/* role to connect as */
                  (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
                  NULL);			/* no out_dbname */
+#endif
 
 PDEBUG("# 164:" __FILE__);
 
@@ -390,16 +504,22 @@ PDEBUG("# 164:" __FILE__);
     }
 */
 
+    fprintf(stderr, "[RePostgresSingleUserMain] R027: Calling interactive_file()\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] About to call interactive_file() for single-user replay");
 #endif
   interactive_file();
+    fprintf(stderr, "[RePostgresSingleUserMain] R028: interactive_file() done\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] interactive_file() completed");
     debug_log_wal_state("POST-INTERACTIVE-FILE");
 #endif
   fclose(single_mode_feed);
   single_mode_feed = NULL;
+    fprintf(stderr, "[RePostgresSingleUserMain] R029: EXIT - single-user replay complete\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[RePostgresSingleUserMain] EXIT - single-user replay complete");
 #endif
@@ -424,21 +544,36 @@ void
 AsyncPostgresSingleUserMain(int argc, char *argv[], const char *username, int async_restart)
 {
 	const char *dbname = NULL;
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A001: ENTRY username=%s async_restart=%d\n",
+            username ? username : "NULL", async_restart);
+    fflush(stderr);
 #ifdef PGL_MOBILE
-    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] ENTRY - username=%s async_restart=%d", 
+    PGL_LOG_INFO("[AsyncPostgresSingleUserMain] ENTRY - username=%s async_restart=%d",
                  username ? username : "NULL", async_restart);
     debug_log_wal_state("PRE-ASYNC-SINGLE-USER");
 #endif
 PDEBUG("# 254:"__FILE__);
 
 // if (!async_restart)	/* Initialize startup process environment. */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A002: Calling InitStandaloneProcess()\n");
+    fflush(stderr);
 	InitStandaloneProcess(argv[0]);
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A003: InitStandaloneProcess() done\n");
+    fflush(stderr);
 PDEBUG("# 254:"__FILE__);
 // if (!async_restart) /* Set default values for command-line options.	 */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A004: Calling InitializeGUCOptions()\n");
+    fflush(stderr);
 	InitializeGUCOptions();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A005: InitializeGUCOptions() done\n");
+    fflush(stderr);
 PDEBUG("# 257:"__FILE__);
 // if (!async_restart)	/* Parse command-line options. */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A006: Calling process_postgres_switches()\n");
+    fflush(stderr);
 	process_postgres_switches(argc, argv, PGC_POSTMASTER, &dbname);
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A007: process_postgres_switches() done, dbname=%s\n", dbname ? dbname : "NULL");
+    fflush(stderr);
 
 
 PDEBUG("# 260:"__FILE__);
@@ -454,54 +589,108 @@ PDEBUG("# 260:"__FILE__);
 	}
 
 PDEBUG("# 291:SelectConfigFiles "__FILE__);
-if (async_restart) goto async_db_change;
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A008: async_restart=%d, checking if we should skip to async_db_change\n", async_restart);
+    fflush(stderr);
+if (async_restart) {
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A009: async_restart=1, jumping to async_db_change\n");
+    fflush(stderr);
+    goto async_db_change;
+}
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A010: async_restart=0, doing full init\n");
+    fflush(stderr);
 	/* Acquire configuration parameters */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A011: Calling SelectConfigFiles()\n");
+    fflush(stderr);
 	if (!SelectConfigFiles(userDoption, progname)) {
+        fprintf(stderr, "[AsyncPostgresSingleUserMain] A012: SelectConfigFiles FAILED, calling proc_exit(1)\n");
+        fflush(stderr);
         proc_exit(1);
     }
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A013: SelectConfigFiles() done\n");
+    fflush(stderr);
 PDEBUG("# 278:SelectConfigFiles "__FILE__);
 
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A014: Calling checkDataDir()\n");
+    fflush(stderr);
 	checkDataDir();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A015: checkDataDir() done\n");
+    fflush(stderr);
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A016: Calling ChangeToDataDir()\n");
+    fflush(stderr);
 	ChangeToDataDir();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A017: ChangeToDataDir() done\n");
+    fflush(stderr);
 
 	/*
 	 * Create lockfile for data directory.
 	 */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A018: Calling CreateDataDirLockFile()\n");
+    fflush(stderr);
 	CreateDataDirLockFile(false);
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A019: CreateDataDirLockFile() done\n");
+    fflush(stderr);
 
 	/* read control file (error checking and contains config ) */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A020: Calling LocalProcessControlFile()\n");
+    fflush(stderr);
 	LocalProcessControlFile(false);
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A021: LocalProcessControlFile() done\n");
+    fflush(stderr);
 
 	/*
 	 * process any libraries that should be preloaded at postmaster start
 	 */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A022: Calling process_shared_preload_libraries()\n");
+    fflush(stderr);
 	process_shared_preload_libraries();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A023: process_shared_preload_libraries() done\n");
+    fflush(stderr);
 
 	/* Initialize MaxBackends */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A024: Calling InitializeMaxBackends()\n");
+    fflush(stderr);
 	InitializeMaxBackends();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A025: InitializeMaxBackends() done\n");
+    fflush(stderr);
 PDEBUG("# 127"); /* on_shmem_exit stubs call start here */
 	/*
 	 * Give preloaded libraries a chance to request additional shared memory.
 	 */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A026: Calling process_shmem_requests()\n");
+    fflush(stderr);
 	process_shmem_requests();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A027: process_shmem_requests() done\n");
+    fflush(stderr);
 
 	/*
 	 * Now that loadable modules have had their chance to request additional
 	 * shared memory, determine the value of any runtime-computed GUCs that
 	 * depend on the amount of shared memory required.
 	 */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A028: Calling InitializeShmemGUCs()\n");
+    fflush(stderr);
 	InitializeShmemGUCs();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A029: InitializeShmemGUCs() done\n");
+    fflush(stderr);
 
 	/*
 	 * Now that modules have been loaded, we can process any custom resource
 	 * managers specified in the wal_consistency_checking GUC.
 	 */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A030: Calling InitializeWalConsistencyChecking()\n");
+    fflush(stderr);
 	InitializeWalConsistencyChecking();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A031: InitializeWalConsistencyChecking() done\n");
+    fflush(stderr);
 
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A032: Calling CreateSharedMemoryAndSemaphores()\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[AsyncPostgresSingleUserMain] About to CreateSharedMemoryAndSemaphores()");
 #endif
 	CreateSharedMemoryAndSemaphores();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A033: CreateSharedMemoryAndSemaphores() done\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[AsyncPostgresSingleUserMain] CreateSharedMemoryAndSemaphores() completed");
 #endif
@@ -511,32 +700,46 @@ PDEBUG("# 127"); /* on_shmem_exit stubs call start here */
 	 * during startup that postmaster does so.
 	 */
 	PgStartTime = GetCurrentTimestamp();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A034: PgStartTime set\n");
+    fflush(stderr);
 
 	/*
 	 * Create a per-backend PGPROC struct in shared memory. We must do this
 	 * before we can use LWLocks.
 	 */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A035: Calling InitProcess()\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[AsyncPostgresSingleUserMain] About to InitProcess()");
 #endif
 	InitProcess();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A036: InitProcess() done\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[AsyncPostgresSingleUserMain] InitProcess() completed");
 #endif
 
 // main
 	SetProcessingMode(InitProcessing);
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A037: SetProcessingMode done\n");
+    fflush(stderr);
 
 	/* Early initialization */
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A038: Calling BaseInit()\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[AsyncPostgresSingleUserMain] About to BaseInit() - WAL recovery happens here");
 #endif
 	BaseInit();
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A039: BaseInit() done\n");
+    fflush(stderr);
 #ifdef PGL_MOBILE
     PGL_LOG_INFO("[AsyncPostgresSingleUserMain] BaseInit() completed - WAL recovery finished");
     debug_log_wal_state("POST-ASYNC-BASEINIT");
 #endif
 async_db_change:;
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A040: At async_db_change label\n");
+    fflush(stderr);
 
 PDEBUG("# 167");
 	/*
@@ -621,6 +824,8 @@ PDEBUG("# 167");
 	MemoryContextSwitchTo(row_description_context);
 	initStringInfo(&row_description_buf);
 	MemoryContextSwitchTo(TopMemoryContext);
+    fprintf(stderr, "[AsyncPostgresSingleUserMain] A041: EXIT - function complete\n");
+    fflush(stderr);
 } // AsyncPostgresSingleUserMain
 
 
