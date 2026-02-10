@@ -63,13 +63,21 @@
 #ifdef PGL_MOBILE
 #include <stdint.h>
 /* SMgr hook dispatch — defined in mobile-build/pgl_smgr_hooks.c */
+
+/* Returns 1 (PGL_TRUE) if hook handled read, 0 (PGL_FALSE) for md.c fallback */
+extern int pgl_smgr_try_read(const void *rlocator, int forknum,
+                             uint32_t blocknum, void **buffers, uint32_t nblocks);
+extern void pgl_smgr_notify_prefetch(const void *rlocator, int forknum,
+                                     uint32_t blocknum, uint32_t nblocks);
 extern void pgl_smgr_notify_write(const void *rlocator, int forknum,
-                                   uint32_t blocknum, uint32_t nblocks);
+                                  uint32_t blocknum, const void **buffers,
+                                  uint32_t nblocks);
 extern void pgl_smgr_notify_extend(const void *rlocator, int forknum,
-                                    uint32_t blocknum, uint32_t nblocks);
+                                   uint32_t blocknum, const void **buffers,
+                                   uint32_t nblocks);
 extern void pgl_smgr_notify_sync(const void *rlocator, int forknum);
 extern void pgl_smgr_notify_truncate(const void *rlocator, int forknum,
-                                      uint32_t old_blocks, uint32_t new_blocks);
+                                     uint32_t old_blocks, uint32_t new_blocks);
 extern void pgl_smgr_notify_unlink(const void *rlocator, int forknum);
 #endif
 
@@ -533,7 +541,11 @@ void smgrextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
     reln->smgr_cached_nblocks[forknum] = InvalidBlockNumber;
 
 #ifdef PGL_MOBILE
-  pgl_smgr_notify_extend(&reln->smgr_rlocator.locator, forknum, blocknum, 1);
+  {
+    const void *buf = buffer;
+    pgl_smgr_notify_extend(&reln->smgr_rlocator.locator, forknum, blocknum,
+                           &buf, 1);
+  }
 #endif
 }
 
@@ -559,9 +571,7 @@ void smgrzeroextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
   else
     reln->smgr_cached_nblocks[forknum] = InvalidBlockNumber;
 
-#ifdef PGL_MOBILE
-  pgl_smgr_notify_extend(&reln->smgr_rlocator.locator, forknum, blocknum, nblocks);
-#endif
+  /* Note: No extend hook for zeroextend - zeroed pages don't need S3 upload */
 }
 
 /*
@@ -574,6 +584,10 @@ void smgrzeroextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
  */
 bool smgrprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
                   int nblocks) {
+#ifdef PGL_MOBILE
+  pgl_smgr_notify_prefetch(&reln->smgr_rlocator.locator, forknum, blocknum,
+                           nblocks);
+#endif
   return smgrsw[reln->smgr_which].smgr_prefetch(reln, forknum, blocknum,
                                                 nblocks);
 }
@@ -588,6 +602,12 @@ bool smgrprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
  */
 void smgrreadv(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
                void **buffers, BlockNumber nblocks) {
+#ifdef PGL_MOBILE
+  /* Try HTTP/cache read first; if hook handled it, skip local disk read */
+  if (pgl_smgr_try_read(&reln->smgr_rlocator.locator, forknum, blocknum,
+                        buffers, nblocks))
+    return;
+#endif
   smgrsw[reln->smgr_which].smgr_readv(reln, forknum, blocknum, buffers,
                                       nblocks);
 }
@@ -620,7 +640,8 @@ void smgrwritev(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
   smgrsw[reln->smgr_which].smgr_writev(reln, forknum, blocknum, buffers,
                                        nblocks, skipFsync);
 #ifdef PGL_MOBILE
-  pgl_smgr_notify_write(&reln->smgr_rlocator.locator, forknum, blocknum, nblocks);
+  pgl_smgr_notify_write(&reln->smgr_rlocator.locator, forknum, blocknum,
+                        buffers, nblocks);
 #endif
 }
 

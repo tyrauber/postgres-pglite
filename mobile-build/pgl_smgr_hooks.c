@@ -1,15 +1,20 @@
 /*
  * pgl_smgr_hooks.c - SMgr-level storage hooks for PGLite mobile/daemon builds
  *
- * Notification-only callbacks that fire after md.c operations succeed.
- * Provides relation-aware context (which table/index, which fork, which blocks)
- * for external S3 upload, dirty tracking, or custom storage tiers.
+ * Provides hooks for both interception (read) and notification (write, etc.)
+ * of PostgreSQL storage manager operations.
  *
- * Called from smgr.c (write/extend/sync/truncate/unlink) and checkpointer.c
+ * Primary use case: HTTP-based storage where S3/CloudFront is the database.
+ * - on_read: Intercept reads to fetch from HTTP instead of local disk
+ * - on_write: Notification with buffer data for S3 upload
+ * - on_prefetch: Async hint for background HTTP prefetch
+ * - on_checkpoint: Sync point - block until S3 uploads complete
+ *
+ * Called from smgr.c (read/write/extend/sync/truncate/unlink) and checkpointer.c
  * (checkpoint complete). All calls are guarded by PGL_MOBILE ifdefs at the
  * call sites.
  *
- * The notify functions accept void* for the RelFileLocator to avoid requiring
+ * The dispatch functions accept void* for the RelFileLocator to avoid requiring
  * PostgreSQL headers. The struct layout is identical to pgl_relfilelocator
  * (3 x uint32_t: spcOid, dbOid, relNumber).
  */
@@ -18,6 +23,8 @@
 #include <string.h>
 
 /* Global hook function pointers (NULL = no callback) */
+static pgl_smgr_read_hook_fn       g_read_hook       = NULL;
+static pgl_smgr_prefetch_hook_fn   g_prefetch_hook   = NULL;
 static pgl_smgr_write_hook_fn      g_write_hook      = NULL;
 static pgl_smgr_extend_hook_fn     g_extend_hook     = NULL;
 static pgl_smgr_sync_hook_fn       g_sync_hook       = NULL;
@@ -30,6 +37,8 @@ pgl_register_smgr_hooks(const pgl_smgr_hooks *hooks)
 {
 	if (hooks == NULL)
 	{
+		g_read_hook       = NULL;
+		g_prefetch_hook   = NULL;
 		g_write_hook      = NULL;
 		g_extend_hook     = NULL;
 		g_sync_hook       = NULL;
@@ -39,6 +48,8 @@ pgl_register_smgr_hooks(const pgl_smgr_hooks *hooks)
 		return;
 	}
 
+	g_read_hook       = hooks->on_read;
+	g_prefetch_hook   = hooks->on_prefetch;
 	g_write_hook      = hooks->on_write;
 	g_extend_hook     = hooks->on_extend;
 	g_sync_hook       = hooks->on_sync;
@@ -64,20 +75,50 @@ convert_rlocator(const void *pg_rlocator)
  * Each checks its hook pointer and returns immediately if NULL (zero overhead).
  */
 
-void
-pgl_smgr_notify_write(const void *rlocator, int forknum,
-                      uint32_t blocknum, uint32_t nblocks)
+/*
+ * Try to read pages via hook (for HTTP storage).
+ * Returns PGL_TRUE if hook filled all buffers, PGL_FALSE to fall through to md.c.
+ */
+int
+pgl_smgr_try_read(const void *rlocator, int forknum,
+                  uint32_t blocknum, void **buffers, uint32_t nblocks)
 {
-	if (g_write_hook)
-		g_write_hook(convert_rlocator(rlocator), forknum, blocknum, nblocks);
+	if (g_read_hook)
+		return g_read_hook(convert_rlocator(rlocator), forknum, blocknum, buffers, nblocks);
+	return PGL_FALSE;
 }
 
+/*
+ * Notify prefetch hook (async hint for background HTTP fetch).
+ */
+void
+pgl_smgr_notify_prefetch(const void *rlocator, int forknum,
+                         uint32_t blocknum, uint32_t nblocks)
+{
+	if (g_prefetch_hook)
+		g_prefetch_hook(convert_rlocator(rlocator), forknum, blocknum, nblocks);
+}
+
+/*
+ * Notify write hook with buffer data (for S3 upload).
+ */
+void
+pgl_smgr_notify_write(const void *rlocator, int forknum,
+                      uint32_t blocknum, const void **buffers, uint32_t nblocks)
+{
+	if (g_write_hook)
+		g_write_hook(convert_rlocator(rlocator), forknum, blocknum, buffers, nblocks);
+}
+
+/*
+ * Notify extend hook with buffer data (for S3 upload of new pages).
+ */
 void
 pgl_smgr_notify_extend(const void *rlocator, int forknum,
-                       uint32_t blocknum, uint32_t nblocks)
+                       uint32_t blocknum, const void **buffers, uint32_t nblocks)
 {
 	if (g_extend_hook)
-		g_extend_hook(convert_rlocator(rlocator), forknum, blocknum, nblocks);
+		g_extend_hook(convert_rlocator(rlocator), forknum, blocknum, buffers, nblocks);
 }
 
 void
