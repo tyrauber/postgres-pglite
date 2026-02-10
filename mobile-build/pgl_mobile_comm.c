@@ -36,18 +36,34 @@ static void mobile_comm_reset(void)
 {
     mobile_comm_init_if_needed();
     resetStringInfo(&mobileSendBuf);
-    original_request_size = 0;  /* Reset for new connection */
-    
-    /* Clear receive buffer state to prevent infinite retry loops */
-    extern void pq_reset_buffer_state(void);
-    pq_reset_buffer_state();
-    PGL_LOG_INFO("mobile_comm_reset: reset receive buffer state (PqRecvPointer=0, PqRecvLength=0)");
-    
-    /* Clear the CMA buffer to prevent bootstrap data from leaking into queries */
-    char *buf = (char*)(intptr_t)get_buffer_addr(1);
-    if (buf && get_buffer_size(1) > 0) {
-        memset(buf, 0, 256);  /* Clear first 256 bytes */
-        PGL_LOG_INFO("mobile_comm_reset: cleared buffer to prevent bootstrap data leakage");
+
+    /*
+     * Distinguish between initial setup and error recovery:
+     *
+     * When original_request_size > 0, we are inside interactive_one()
+     * processing a wire protocol request. pq_comm_reset() was called by
+     * clear_error() during error recovery. We must NOT reset
+     * original_request_size because mobile_flush() uses it to calculate
+     * the output offset in the CMA buffer. Resetting it would cause error
+     * responses to be written at offset 0 instead of (input_size + 2),
+     * making the C++ reader miss them entirely.
+     *
+     * When original_request_size == 0, we are in initial setup / bootstrap.
+     * Do the full cleanup to prevent stale data from leaking.
+     */
+    if (original_request_size > 0) {
+        /* Error recovery during query processing - preserve output offset */
+        PGL_LOG_INFO("mobile_comm_reset: error recovery (preserving original_request_size=%d)", original_request_size);
+    } else {
+        /* Initial setup / bootstrap - full cleanup */
+        extern void pq_reset_buffer_state(void);
+        pq_reset_buffer_state();
+
+        char *buf = (char*)(intptr_t)get_buffer_addr(1);
+        if (buf && get_buffer_size(1) > 0) {
+            memset(buf, 0, 256);
+        }
+        PGL_LOG_INFO("mobile_comm_reset: bootstrap cleanup (buffer cleared)");
     }
 }
 
