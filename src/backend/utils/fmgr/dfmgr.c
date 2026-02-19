@@ -117,19 +117,22 @@ load_external_function(const char *filename, const char *funcname,
 	 */
 	void *retval;
 	static bool plpgsql_initialized = false;
+	static bool pgsodium_initialized = false;
+	static bool postgis_initialized = false;
 
 	/* Debug logging with fflush after every line */
 	fprintf(stderr, "[PGL_MOBILE] load_external_function: filename='%s' funcname='%s'\n",
 					filename ? filename : "(null)", funcname ? funcname : "(null)");
 	fflush(stderr);
 
-	fprintf(stderr, "[PGL_MOBILE] plpgsql_initialized=%d, checking filename...\n", plpgsql_initialized);
+	fprintf(stderr, "[PGL_MOBILE] plpgsql_initialized=%d, pgsodium_initialized=%d, postgis_initialized=%d, checking filename...\n",
+					plpgsql_initialized, pgsodium_initialized, postgis_initialized);
 	fflush(stderr);
 
 	/*
-	 * CRITICAL: plpgsql requires _PG_init to be called before any of its
-	 * functions can work. This initializes globals like simple_eval_estate.
-	 * Without this, DO blocks and other PL/pgSQL features will crash.
+	 * CRITICAL: Extensions require _PG_init to be called before any of their
+	 * functions can work. Each extension has its own init function that sets up
+	 * required globals, registers hooks, etc.
 	 */
 	if (filename && strstr(filename, "plpgsql") != NULL && !plpgsql_initialized)
 	{
@@ -153,9 +156,67 @@ load_external_function(const char *filename, const char *funcname,
 			fflush(stderr);
 		}
 	}
+	else if (filename && strstr(filename, "pgsodium") != NULL && !pgsodium_initialized)
+	{
+		/*
+		 * pgsodium requires _PG_init to:
+		 * 1. Initialize libsodium via sodium_init()
+		 * 2. Register the "pgsodium" security label provider
+		 * Without this, SECURITY LABEL statements will fail.
+		 */
+		fprintf(stderr, "[PGL_MOBILE] pgsodium detected in filename, looking up pgsodium_PG_init...\n");
+		fflush(stderr);
+		PG_init_t PG_init = (PG_init_t)pgl_mobile_lookup_symbol("pgsodium_PG_init");
+		fprintf(stderr, "[PGL_MOBILE] pgsodium_PG_init lookup returned %p\n", (void *)PG_init);
+		fflush(stderr);
+		if (PG_init)
+		{
+			fprintf(stderr, "[PGL_MOBILE] Calling pgsodium_PG_init()...\n");
+			fflush(stderr);
+			PG_init();
+			pgsodium_initialized = true;
+			fprintf(stderr, "[PGL_MOBILE] pgsodium_PG_init() completed successfully\n");
+			fflush(stderr);
+		}
+		else
+		{
+			fprintf(stderr, "[PGL_MOBILE] WARNING: pgsodium_PG_init not found in symbol registry!\n");
+			fflush(stderr);
+		}
+	}
+	else if (filename && strstr(filename, "postgis") != NULL && !postgis_initialized)
+	{
+		/*
+		 * PostGIS requires _PG_init to:
+		 * 1. Install GEOS error handlers via pg_install_lwgeom_handlers()
+		 * 2. Set up PROJ error logging
+		 * 3. Install executor hooks for interrupt handling
+		 * Without this, PostGIS functions will crash when GEOS errors occur
+		 * or when using uninitialized error handlers.
+		 */
+		fprintf(stderr, "[PGL_MOBILE] postgis detected in filename, looking up _PG_init...\n");
+		fflush(stderr);
+		PG_init_t PG_init = (PG_init_t)pgl_mobile_lookup_symbol("_PG_init");
+		fprintf(stderr, "[PGL_MOBILE] postgis _PG_init lookup returned %p\n", (void *)PG_init);
+		fflush(stderr);
+		if (PG_init)
+		{
+			fprintf(stderr, "[PGL_MOBILE] Calling postgis _PG_init()...\n");
+			fflush(stderr);
+			PG_init();
+			postgis_initialized = true;
+			fprintf(stderr, "[PGL_MOBILE] postgis _PG_init() completed successfully\n");
+			fflush(stderr);
+		}
+		else
+		{
+			fprintf(stderr, "[PGL_MOBILE] WARNING: postgis _PG_init not found in symbol registry!\n");
+			fflush(stderr);
+		}
+	}
 	else
 	{
-		fprintf(stderr, "[PGL_MOBILE] Skipping plpgsql init (already done or not plpgsql)\n");
+		fprintf(stderr, "[PGL_MOBILE] Skipping extension init (already done or no init needed)\n");
 		fflush(stderr);
 	}
 
