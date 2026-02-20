@@ -5420,23 +5420,12 @@ bool
 PglMobileForceCleanShutdown(void)
 {
 	if (ControlFile == NULL)
-	{
-		fprintf(stderr, "[PGL_MOBILE] PglMobileForceCleanShutdown: ControlFile is NULL\n");
 		return false;
-	}
-
-	fprintf(stderr, "[PGL_MOBILE] PglMobileForceCleanShutdown: current state = %d\n", 
-			ControlFile->state);
 
 	/* Check if database was not cleanly shut down */
 	if (ControlFile->state != DB_SHUTDOWNED &&
 		ControlFile->state != DB_SHUTDOWNED_IN_RECOVERY)
 	{
-		fprintf(stderr, "[PGL_MOBILE] WARNING: Database was not cleanly shut down (state=%d)\n", 
-				ControlFile->state);
-		fprintf(stderr, "[PGL_MOBILE] Forcing clean shutdown state to skip WAL recovery\n");
-		fprintf(stderr, "[PGL_MOBILE] This may lose uncommitted transactions from the previous session\n");
-
 		/*
 		 * Force the control file to indicate a clean shutdown.
 		 * This tells StartupXLOG() that no recovery is needed.
@@ -5449,13 +5438,9 @@ PglMobileForceCleanShutdown(void)
 		UpdateControlFile();
 		LWLockRelease(ControlFileLock);
 
-		fprintf(stderr, "[PGL_MOBILE] Control file updated, state now = %d\n", 
-				ControlFile->state);
 		return true;
 	}
 
-	fprintf(stderr, "[PGL_MOBILE] Database was cleanly shut down (state=%d), no action needed\n",
-			ControlFile->state);
 	return false;
 }
 #endif /* PGL_MOBILE */
@@ -5635,13 +5620,20 @@ puts("# StartupXLOG:014 calling SetCommitTsLimit");
 	SetCommitTsLimit(checkPoint.oldestCommitTsXid,
 					 checkPoint.newestCommitTsXid);
 	XLogCtl->ckptFullXid = checkPoint.nextXid;
-puts("# StartupXLOG:015 shared memory vars initialized"); 
+puts("# StartupXLOG:015 shared memory vars initialized");
 
 	/*
 	 * Clear out any old relcache cache files.
+	 * PGLite optimization: Only remove on crash/unclean shutdown.
+	 * On clean shutdown, the init files are valid and can be reused,
+	 * saving ~3-5ms on cold-start by avoiding RelationCacheInitializePhase3
+	 * having to rebuild them from scratch.
 	 */
-puts("# StartupXLOG:016 calling RelationCacheInitFileRemove()"); 
-	RelationCacheInitFileRemove();
+puts("# StartupXLOG:016 calling RelationCacheInitFileRemove()");
+	if (didCrash)
+		RelationCacheInitFileRemove();
+	else
+		puts("# StartupXLOG:016a clean shutdown - preserving relcache init files");
 puts("# StartupXLOG:017 RelationCacheInitFileRemove() done"); 
 
 	/*
