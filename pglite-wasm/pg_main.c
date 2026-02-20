@@ -112,6 +112,19 @@ int pgl_get_log_level(void)
     return pgl_log_min_level;
 }
 
+#ifndef PGL_MOBILE
+// WASM: enable init profiling at runtime
+void pgl_enable_profiling(bool enable)
+{
+    extern volatile bool pgl_profile_enabled;
+    pgl_profile_enabled = enable;
+    if (enable) {
+        fprintf(stderr, "[PGL_PROFILE] profiling enabled\n");
+        fflush(stderr);
+    }
+}
+#endif
+
 // ============================================================================
 // Global variables for IDB pipe simulation (declared extern in pgl_os.h)
 // ============================================================================
@@ -265,9 +278,11 @@ const char *progname;
 /* Mobile: defined in sdk_port-mobile.c */
 extern volatile bool is_repl;
 extern volatile bool pgl_archiving_enabled;
+extern volatile bool pgl_profile_enabled;
 #else
 /* WASM: define here */
 volatile bool is_repl = true;
+volatile bool pgl_profile_enabled = false;
 #endif
 volatile bool is_node = true;
 volatile bool is_embed = false;
@@ -1213,6 +1228,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
         MemoryContextInit();
     else
         CurrentMemoryContext = TopMemoryContext;
+    PGL_PROFILE_PHASE("MemoryContextInit");
 
     /* Step 2: Standalone process (latches, signals) */
     {
@@ -1221,9 +1237,11 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
         snprintf(argv0_buf, sizeof(argv0_buf), "%s/bin/postgres", pr);
         InitStandaloneProcess(argv0_buf);
     }
+    PGL_PROFILE_PHASE("InitStandaloneProcess");
 
     /* Step 3: GUC options */
     InitializeGUCOptions();
+    PGL_PROFILE_PHASE("InitializeGUCOptions");
 
     /* Step 4: Set DataDir */
     SetDataDir((const char *)PGDATA);
@@ -1233,6 +1251,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     /* Step 5: Config files */
     if (!SelectConfigFiles(NULL, "postgres"))
         PGL_DEBUG_PRINT(stderr, "[pgl_backend] WARNING: SelectConfigFiles failed, continuing\n");
+    PGL_PROFILE_PHASE("SelectConfigFiles");
 
 #ifdef PGL_MOBILE
     /* Enable WAL archiving if requested via pgl_enable_archiving().
@@ -1247,9 +1266,11 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
 
     /* Step 6: Control file */
     LocalProcessControlFile(false);
+    PGL_PROFILE_PHASE("LocalProcessControlFile");
 
     /* Step 7: Preload libraries */
     process_shared_preload_libraries();
+    PGL_PROFILE_PHASE("process_shared_preload_libraries");
 
     /* Step 8: MaxBackends */
     InitializeMaxBackends();
@@ -1265,21 +1286,25 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
 
     /* Step 12: Shared memory */
     CreateSharedMemoryAndSemaphores();
+    PGL_PROFILE_PHASE("CreateSharedMemoryAndSemaphores");
 
     /* Step 13: Startup time */
     PgStartTime = GetCurrentTimestamp();
 
     /* Step 14: Process struct */
     InitProcess();
+    PGL_PROFILE_PHASE("InitProcess");
 
     /* Step 15: Processing mode */
     SetProcessingMode(InitProcessing);
 
     /* Step 16: Base init (smgr, buffers, VFD) */
     BaseInit();
+    PGL_PROFILE_PHASE("BaseInit");
 
     /* Step 17: Timeouts */
     InitializeTimeouts();
+    PGL_PROFILE_PHASE("InitializeTimeouts");
 
     /* Step 18: Unblock signals */
     {
@@ -1295,6 +1320,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
         InitPostgres(dbname, InvalidOid, username, InvalidOid,
                      INIT_PG_LOAD_SESSION_LIBS, NULL);
     }
+    PGL_PROFILE_PHASE("InitPostgres");
 
     /* Step 20: Normal processing */
     SetProcessingMode(NormalProcessing);
@@ -1305,6 +1331,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     PGL_LOG_INFO("[pgl_backend] Existing DB cold-start init complete");
     PGL_DEBUG_PRINT(stderr, "[pgl_backend] B039b: Existing DB cold-start init complete\n");
     fflush(stderr);
+    PGL_PROFILE_TOTAL("pgl_backend");
 
     goto backend_started;
 #endif /* PGL_MOBILE */

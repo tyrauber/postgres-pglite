@@ -510,7 +510,16 @@ PG_MAGIC_FUNCTION_NAME(void) \
 	return &Pg_magic_data; \
 } \
 extern int no_such_variable
+/* For WASI builds, PG_MODULE_MAGIC is not needed (no dlopen) */
 #if defined(__wasi__) && !defined(__EMSCRIPTEN__)
+#undef PG_MODULE_MAGIC
+#define PG_MODULE_MAGIC
+#endif
+
+/* For PGLite static extension builds, blank out PG_MODULE_MAGIC to avoid
+ * duplicate symbol errors when linking multiple extensions. The magic check
+ * is only needed for dynamically loaded extensions. */
+#if defined(PGL_STATIC_EXT)
 #undef PG_MODULE_MAGIC
 #define PG_MODULE_MAGIC
 #endif

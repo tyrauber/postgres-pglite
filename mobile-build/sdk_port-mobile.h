@@ -22,6 +22,22 @@ void pgl_skip_auth(void);
 // Resets: mobile_auth_started, CMA buffers, PQ send/recv buffers, channel
 void pgl_reset_wire_session(void);
 
+// Init profiling - measures time spent in pgl_backend() and pgl_initdb() phases.
+// Call pgl_enable_profiling(true) BEFORE pgl_backend()/pgl_initdb() to enable.
+// Output format: [PGL_PROFILE] phase_name: Xms
+// Phases measured: MemoryContextInit, InitStandaloneProcess, InitializeGUCOptions,
+//   SelectConfigFiles, LocalProcessControlFile, process_shared_preload_libraries,
+//   CreateSharedMemoryAndSemaphores, InitProcess, BaseInit, InitializeTimeouts, InitPostgres
+void pgl_enable_profiling(bool enable);
+extern volatile bool pgl_profile_enabled;
+
+// Cold-start mode - tell pgl_backend() that a database already exists on disk.
+// Call this BEFORE pgl_backend() when starting a fresh process with an existing database.
+// This skips the initdb replay phase and goes directly to backend initialization.
+// Required for serverless cold-start scenarios (Lambda, etc.) where each invocation
+// is a new process but the database files already exist (from S3/EFS).
+void pgl_set_existing_db(void);
+
 // I/O hook registration for custom storage layers (EFS, S3, etc.)
 // See pgl_io_hooks.h for the full type definitions.
 #include "pgl_io_hooks.h"

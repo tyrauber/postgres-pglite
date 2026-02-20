@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sys/stat.h>
+#include <stdbool.h>
 
 #include <stdio.h> // FILE
 #include <stdlib.h>
@@ -99,11 +100,13 @@ int pgl_get_log_level(void);
 
 // ============================================================================
 // Init Profiling - Measures time spent in initdb and backend initialization
-// Build with -DPGL_PROFILE_INIT to enable. OFF by default.
+// Enable at runtime with pgl_enable_profiling(true) before pgl_backend/pgl_initdb.
 // Output format: [PGL_PROFILE] phase_name: Xms
 // ============================================================================
-#ifdef PGL_PROFILE_INIT
 #include <sys/time.h>
+
+// Runtime profiling flag - defined in sdk_port-mobile.c (mobile) or pg_main.c (WASM)
+extern volatile bool pgl_profile_enabled;
 
 static inline long long pgl_profile_now_ms(void) {
     struct timeval tv;
@@ -112,27 +115,27 @@ static inline long long pgl_profile_now_ms(void) {
 }
 
 #define PGL_PROFILE_DECL() static long long _pgl_profile_start = 0, _pgl_profile_phase = 0
-#define PGL_PROFILE_START() do { _pgl_profile_start = pgl_profile_now_ms(); _pgl_profile_phase = _pgl_profile_start; } while(0)
+#define PGL_PROFILE_START() do { \
+    if (pgl_profile_enabled) { \
+        _pgl_profile_start = pgl_profile_now_ms(); \
+        _pgl_profile_phase = _pgl_profile_start; \
+    } \
+} while(0)
 #define PGL_PROFILE_PHASE(name) do { \
-    long long _now = pgl_profile_now_ms(); \
-    fprintf(stderr, "[PGL_PROFILE] %s: %lldms\n", name, _now - _pgl_profile_phase); \
-    fflush(stderr); \
-    _pgl_profile_phase = _now; \
+    if (pgl_profile_enabled) { \
+        long long _now = pgl_profile_now_ms(); \
+        fprintf(stderr, "[PGL_PROFILE] %s: %lldms\n", name, _now - _pgl_profile_phase); \
+        fflush(stderr); \
+        _pgl_profile_phase = _now; \
+    } \
 } while(0)
 #define PGL_PROFILE_TOTAL(name) do { \
-    long long _now = pgl_profile_now_ms(); \
-    fprintf(stderr, "[PGL_PROFILE] %s (total): %lldms\n", name, _now - _pgl_profile_start); \
-    fflush(stderr); \
+    if (pgl_profile_enabled) { \
+        long long _now = pgl_profile_now_ms(); \
+        fprintf(stderr, "[PGL_PROFILE] %s (total): %lldms\n", name, _now - _pgl_profile_start); \
+        fflush(stderr); \
+    } \
 } while(0)
-
-#else // !PGL_PROFILE_INIT - Default: profiling disabled
-
-#define PGL_PROFILE_DECL()
-#define PGL_PROFILE_START() ((void)0)
-#define PGL_PROFILE_PHASE(name) ((void)0)
-#define PGL_PROFILE_TOTAL(name) ((void)0)
-
-#endif // PGL_PROFILE_INIT
 
 // These are defined in pg_main.c - declare extern here
 extern FILE *IDB_PIPE_FP;

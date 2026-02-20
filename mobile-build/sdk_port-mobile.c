@@ -119,6 +119,41 @@ void pgl_skip_auth(void) {
  *   pgl_reset_wire_session();
  *   // Now ready for new client connection
  */
+/* --- Init Profiling --- */
+
+/* Runtime flag for init profiling - default OFF */
+volatile bool pgl_profile_enabled = false;
+
+void pgl_enable_profiling(bool enable) {
+  pgl_profile_enabled = enable;
+  if (enable) {
+    fprintf(stderr, "[PGL_PROFILE] profiling enabled\n");
+    fflush(stderr);
+  }
+}
+
+/* External from pg_main.c - controls initdb replay vs existing-db path */
+extern volatile int async_restart;
+extern volatile int pgl_idb_status;
+
+/*
+ * Cold-start mode: tell pgl_backend() that a database already exists on disk.
+ *
+ * In serverless scenarios (Lambda cold-start), each invocation is a fresh process
+ * but the database files exist (from S3/EFS). Without this call, pgl_backend()
+ * would try to replay initdb which fails on an existing database.
+ *
+ * Must be called BEFORE pgl_backend().
+ */
+void pgl_set_existing_db(void) {
+  /* Skip initdb replay - go directly to existing-db initialization path */
+  async_restart = 0;
+  /* Mark initdb as "called" so the warning check passes */
+  pgl_idb_status = 0b11111110;  /* IDB_OK value from pg_main.c */
+  fprintf(stderr, "[PGL] pgl_set_existing_db: cold-start mode enabled\n");
+  fflush(stderr);
+}
+
 /* --- WAL Archive Callback --- */
 
 /* Global callback pointer defined in xlogarchive.c, NULL means no archive callback registered */
