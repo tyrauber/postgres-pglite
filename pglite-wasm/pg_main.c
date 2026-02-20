@@ -711,6 +711,9 @@ extern void pgl_mobile_init_extensions(void);
 
 __attribute__((export_name("pgl_backend"))) int pgl_backend()
 {
+    PGL_PROFILE_DECL();
+    PGL_PROFILE_START();
+
     /* IMMEDIATE logging - before anything else */
     PGL_DEBUG_PRINT(stderr, "[pgl_backend] B001: IMMEDIATE ENTRY - function called\n");
     fflush(stderr);
@@ -979,6 +982,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
                 CurrentMemoryContext = TopMemoryContext;
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017b: MemoryContextInit() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("MemoryContextInit");
 
             /* Step 2: Initialize standalone process (latches, signals, process globals).
              * This is CRITICAL - without it, CreateSharedMemoryAndSemaphores will hang
@@ -992,6 +996,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
                 InitStandaloneProcess(argv0_buf);
                 PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017d: InitStandaloneProcess() done\n");
                 fflush(stderr);
+                PGL_PROFILE_PHASE("InitStandaloneProcess");
             }
 
             /* Step 3: Initialize GUC options */
@@ -1000,6 +1005,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             InitializeGUCOptions();
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017f: InitializeGUCOptions() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("InitializeGUCOptions");
 
             /* Step 4: Set DataDir and chdir */
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017g: Setting DataDir to %s\n", PGDATA);
@@ -1019,6 +1025,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             }
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017j: SelectConfigFiles() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("SelectConfigFiles");
 
 #ifdef PGL_MOBILE
             /* Enable WAL archiving if requested via pgl_enable_archiving().
@@ -1038,6 +1045,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             LocalProcessControlFile(false);
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B019: LocalProcessControlFile() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("LocalProcessControlFile");
 
             /* Load preload libraries */
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B020: Calling process_shared_preload_libraries()\n");
@@ -1045,6 +1053,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             process_shared_preload_libraries();
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B021: process_shared_preload_libraries() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("process_shared_preload_libraries");
 
             /* Initialize MaxBackends - required for shared memory sizing */
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B022: Calling InitializeMaxBackends()\n");
@@ -1080,6 +1089,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             CreateSharedMemoryAndSemaphores();
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B031: CreateSharedMemoryAndSemaphores() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("CreateSharedMemoryAndSemaphores");
 
             /* Record startup time */
             PgStartTime = GetCurrentTimestamp();
@@ -1092,6 +1102,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             InitProcess();
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B034: InitProcess() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("InitProcess");
 
             /* Set processing mode - SetProcessingMode is a macro */
             SetProcessingMode(InitProcessing);
@@ -1104,6 +1115,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             BaseInit();
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037: BaseInit() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("BaseInit");
 
             /* Initialize timeout infrastructure - MUST be before InitPostgres
              * which calls RegisterTimeout for deadlock, statement, lock timeouts */
@@ -1112,6 +1124,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             InitializeTimeouts();
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037a2: InitializeTimeouts() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("InitializeTimeouts");
 
             /* Unblock signals - InitPostgres needs SIGALRM for timeouts */
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037a: Unblocking signals\n");
@@ -1147,6 +1160,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             }
             PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037c: InitPostgres() done\n");
             fflush(stderr);
+            PGL_PROFILE_PHASE("InitPostgres");
 
             /* Switch to normal processing mode */
             SetProcessingMode(NormalProcessing);
@@ -1523,6 +1537,7 @@ backend_started:;
 #endif
     PGL_DEBUG_PRINT(stderr, "[pgl_backend] B056: RETURNING 0\n");
     fflush(stderr);
+    PGL_PROFILE_TOTAL("pgl_backend");
     return 0; /* Success */
 }
 
@@ -1533,6 +1548,9 @@ __attribute__((export_name("pgl_initdb")))
 #endif
 int pgl_initdb()
 {
+    PGL_PROFILE_DECL();
+    PGL_PROFILE_START();
+
     PGL_LOG_INFO("[pgl_initdb] ENTRY: function called");
     PDEBUG("# 412: pg_initdb()");
     /* Ensure PREFIX/PGDATA/PGUSER defaults like wasm main_pre */
@@ -1750,6 +1768,7 @@ run_initdb:
 #endif
     PGL_DEBUG_PRINT(stderr, "[pgl_main] pgl_initdb_main rc=%d\n", initdb_rc);
     PGL_LOG_INFO("[pgl_initdb] pgl_initdb_main() returned %d", initdb_rc);
+    PGL_PROFILE_PHASE("pgl_initdb_main");
     const char *skip_replay = getenv("PGL_SKIP_REPLAY");
     if (skip_replay && skip_replay[0] == '1')
     {
@@ -2149,6 +2168,7 @@ run_initdb:
         PGL_DEBUG_PRINT(stderr, "[pgl_main] bootstrap section completed successfully\n");
         PGL_LOG_ERROR("%s", "[pgl_main] *** BOOTSTRAP SECTION COMPLETED SUCCESSFULLY ***");
         PGL_LOG_ERROR("%s", "[pgl_main] *** EXITING BOOTSTRAP BLOCK ***");
+        PGL_PROFILE_PHASE("BootstrapModeMain");
     }
 
     PGL_LOG_ERROR("%s", "[pgl_initdb] *** PAST BOOTSTRAP SECTION, CONTINUING TO CLEANUP ***");
@@ -2208,6 +2228,7 @@ initdb_done:;
     PGL_LOG_ERROR("%s", "[pgl_initdb] *** If you see this message, pgl_initdb completed successfully ***");
     PGL_DEBUG_PRINT(stderr, "[pgl_initdb] *** RETURNING FROM pgl_initdb WITH STATUS %d ***\n", pgl_idb_status);
     PGL_LOG_ERROR("%s", "[pgl_initdb] *** ABOUT TO EXECUTE RETURN STATEMENT ***");
+    PGL_PROFILE_TOTAL("pgl_initdb");
     return pgl_idb_status;
 } // pgl_initdb
 
