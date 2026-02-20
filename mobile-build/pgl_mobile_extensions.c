@@ -70,6 +70,17 @@ extern const Pg_finfo_record *pg_finfo_plpgsql_inline_handler(void);
 extern const Pg_finfo_record *pg_finfo_plpgsql_validator(void);
 
 /* ============================================================
+ * DICT_SNOWBALL Extension (built-in - Snowball stemmers for full-text search)
+ * Provides language-specific word stemming for 30+ languages
+ * ============================================================ */
+extern Datum dsnowball_init(PG_FUNCTION_ARGS);
+extern Datum dsnowball_lexize(PG_FUNCTION_ARGS);
+
+/* pg_finfo functions for dict_snowball */
+extern const Pg_finfo_record *pg_finfo_dsnowball_init(void);
+extern const Pg_finfo_record *pg_finfo_dsnowball_lexize(void);
+
+/* ============================================================
  * CITEXT Extension
  * citext uses text's I/O functions, so it only defines comparison functions
  * ============================================================ */
@@ -194,6 +205,12 @@ __attribute__((used)) static const pgl_mobile_symbol_entry pgl_mobile_extension_
     {"pg_finfo_plpgsql_inline_handler", (void *)pg_finfo_plpgsql_inline_handler},
     {"pg_finfo_plpgsql_validator", (void *)pg_finfo_plpgsql_validator},
 
+    /* dict_snowball - always included (Snowball stemmers for full-text search) */
+    {"dsnowball_init", (void *)dsnowball_init},
+    {"dsnowball_lexize", (void *)dsnowball_lexize},
+    {"pg_finfo_dsnowball_init", (void *)pg_finfo_dsnowball_init},
+    {"pg_finfo_dsnowball_lexize", (void *)pg_finfo_dsnowball_lexize},
+
 #ifdef PGL_EXT_CITEXT
     /* citext functions */
     {"citext_cmp", (void *)citext_cmp},
@@ -305,33 +322,64 @@ extern void pgl_external_force_link_extensions(void) __attribute__((weak));
  * This pattern bypasses weak symbol linking issues by using explicit
  * function pointer registration. Extensions call pgl_register_*()
  * during initialization (via __attribute__((constructor))).
+ *
+ * IMPORTANT: Supports MULTIPLE extensions (e.g., PostGIS + pgsodium).
+ * Each extension registers its own lookup/is_builtin/force_link functions.
+ * We store them in arrays and iterate through all of them.
  * ============================================================ */
 typedef void *(*pgl_lookup_fn)(const char *symbol);
 typedef bool (*pgl_is_builtin_fn)(const char *libname);
 typedef void (*pgl_force_link_fn)(void);
 
-/* Registered function pointers (NULL by default) */
-static pgl_lookup_fn pgl_registered_lookup_symbol = NULL;
-static pgl_is_builtin_fn pgl_registered_is_builtin_library = NULL;
-static pgl_force_link_fn pgl_registered_force_link_extensions = NULL;
+/* Maximum number of external extensions that can be registered */
+#define PGL_MAX_EXTERNAL_EXTENSIONS 16
+
+/* Registered function pointer arrays (supports multiple extensions) */
+static pgl_lookup_fn pgl_registered_lookups[PGL_MAX_EXTERNAL_EXTENSIONS];
+static pgl_is_builtin_fn pgl_registered_is_builtins[PGL_MAX_EXTERNAL_EXTENSIONS];
+static pgl_force_link_fn pgl_registered_force_links[PGL_MAX_EXTERNAL_EXTENSIONS];
+static int pgl_num_registered_lookups = 0;
+static int pgl_num_registered_is_builtins = 0;
+static int pgl_num_registered_force_links = 0;
 
 /* Public registration functions - called by generated extension registries */
 void pgl_register_external_lookup(pgl_lookup_fn fn)
 {
-  PGL_LOG_FMT("Registering external lookup function: %p", (void *)fn);
-  pgl_registered_lookup_symbol = fn;
+  if (pgl_num_registered_lookups >= PGL_MAX_EXTERNAL_EXTENSIONS)
+  {
+    PGL_LOG_FMT("WARNING: Cannot register lookup function %p - max extensions (%d) reached",
+                (void *)fn, PGL_MAX_EXTERNAL_EXTENSIONS);
+    return;
+  }
+  PGL_LOG_FMT("Registering external lookup function [%d]: %p",
+              pgl_num_registered_lookups, (void *)fn);
+  pgl_registered_lookups[pgl_num_registered_lookups++] = fn;
 }
 
 void pgl_register_external_is_builtin(pgl_is_builtin_fn fn)
 {
-  PGL_LOG_FMT("Registering external is_builtin function: %p", (void *)fn);
-  pgl_registered_is_builtin_library = fn;
+  if (pgl_num_registered_is_builtins >= PGL_MAX_EXTERNAL_EXTENSIONS)
+  {
+    PGL_LOG_FMT("WARNING: Cannot register is_builtin function %p - max extensions (%d) reached",
+                (void *)fn, PGL_MAX_EXTERNAL_EXTENSIONS);
+    return;
+  }
+  PGL_LOG_FMT("Registering external is_builtin function [%d]: %p",
+              pgl_num_registered_is_builtins, (void *)fn);
+  pgl_registered_is_builtins[pgl_num_registered_is_builtins++] = fn;
 }
 
 void pgl_register_external_force_link(pgl_force_link_fn fn)
 {
-  PGL_LOG_FMT("Registering external force_link function: %p", (void *)fn);
-  pgl_registered_force_link_extensions = fn;
+  if (pgl_num_registered_force_links >= PGL_MAX_EXTERNAL_EXTENSIONS)
+  {
+    PGL_LOG_FMT("WARNING: Cannot register force_link function %p - max extensions (%d) reached",
+                (void *)fn, PGL_MAX_EXTERNAL_EXTENSIONS);
+    return;
+  }
+  PGL_LOG_FMT("Registering external force_link function [%d]: %p",
+              pgl_num_registered_force_links, (void *)fn);
+  pgl_registered_force_links[pgl_num_registered_force_links++] = fn;
 }
 
 /*
@@ -347,26 +395,21 @@ pgl_mobile_lookup_symbol(const char *symbol)
   if (symbol == NULL)
     return NULL;
 
-  PGL_LOG_FMT("pgl_mobile_lookup_symbol('%s') searching...", symbol);
-
   /* First, check built-in extensions */
   for (entry = pgl_mobile_extension_symbols; entry->name != NULL; entry++)
   {
     if (strcmp(entry->name, symbol) == 0)
-    {
-      PGL_LOG_FMT("Found '%s' in built-in registry at %p", symbol, entry->address);
       return entry->address;
-    }
   }
 
-  /* Then, check registered external extension function (priority over weak symbols) */
-  if (pgl_registered_lookup_symbol != NULL)
+  /* Then, check all registered external extension functions (priority over weak symbols) */
+  for (int i = 0; i < pgl_num_registered_lookups; i++)
   {
-    result = pgl_registered_lookup_symbol(symbol);
-    if (result != NULL)
+    if (pgl_registered_lookups[i] != NULL)
     {
-      PGL_LOG_FMT("Found '%s' in registered external registry at %p", symbol, result);
-      return result;
+      result = pgl_registered_lookups[i](symbol);
+      if (result != NULL)
+        return result;
     }
   }
 
@@ -375,13 +418,9 @@ pgl_mobile_lookup_symbol(const char *symbol)
   {
     result = pgl_external_lookup_symbol(symbol);
     if (result != NULL)
-    {
-      PGL_LOG_FMT("Found '%s' in weak external registry at %p", symbol, result);
       return result;
-    }
   }
 
-  PGL_LOG_FMT("Symbol '%s' NOT FOUND in any registry", symbol);
   return NULL;
 }
 
@@ -394,48 +433,35 @@ bool pgl_mobile_is_builtin_library(const char *libname)
   if (libname == NULL)
     return false;
 
-  PGL_LOG_FMT("pgl_mobile_is_builtin_library('%s')", libname);
-
   /* Check for plpgsql (always built-in) */
   if (strstr(libname, "plpgsql") != NULL)
-  {
-    PGL_LOG_FMT("'%s' matched plpgsql - returning true", libname);
     return true;
-  }
+
+  /* Check for dict_snowball (always built-in - Snowball stemmers) */
+  if (strstr(libname, "snowball") != NULL || strstr(libname, "dict_snowball") != NULL)
+    return true;
 
 #ifdef PGL_EXT_CITEXT
   if (strstr(libname, "citext") != NULL)
-  {
-    PGL_LOG_FMT("'%s' matched citext (PGL_EXT_CITEXT defined) - returning true", libname);
     return true;
-  }
-#else
-  PGL_LOG("PGL_EXT_CITEXT not defined!");
 #endif
 
 #ifdef PGL_EXT_HSTORE
   if (strstr(libname, "hstore") != NULL)
-  {
-    PGL_LOG_FMT("'%s' matched hstore - returning true", libname);
     return true;
-  }
 #endif
 
-  /* Check registered external extension function (priority over weak symbols) */
-  if (pgl_registered_is_builtin_library != NULL && pgl_registered_is_builtin_library(libname))
+  /* Check all registered external extension functions (priority over weak symbols) */
+  for (int i = 0; i < pgl_num_registered_is_builtins; i++)
   {
-    PGL_LOG_FMT("'%s' matched registered external extension - returning true", libname);
-    return true;
+    if (pgl_registered_is_builtins[i] != NULL && pgl_registered_is_builtins[i](libname))
+      return true;
   }
 
   /* Fallback: check weak external extension registries */
   if (pgl_external_is_builtin_library != NULL && pgl_external_is_builtin_library(libname))
-  {
-    PGL_LOG_FMT("'%s' matched weak external extension - returning true", libname);
     return true;
-  }
 
-  PGL_LOG_FMT("'%s' not a builtin library - returning false", libname);
   return false;
 }
 
@@ -465,6 +491,12 @@ void pgl_mobile_force_link_extensions(void)
   _pgl_force_link_sink = (void *)pg_finfo_plpgsql_inline_handler;
   _pgl_force_link_sink = (void *)pg_finfo_plpgsql_validator;
 
+  /* dict_snowball - always included */
+  _pgl_force_link_sink = (void *)dsnowball_init;
+  _pgl_force_link_sink = (void *)dsnowball_lexize;
+  _pgl_force_link_sink = (void *)pg_finfo_dsnowball_init;
+  _pgl_force_link_sink = (void *)pg_finfo_dsnowball_lexize;
+
 #ifdef PGL_EXT_CITEXT
   _pgl_force_link_sink = (void *)citext_cmp;
   _pgl_force_link_sink = (void *)citext_eq;
@@ -483,10 +515,13 @@ void pgl_mobile_force_link_extensions(void)
   _pgl_force_link_sink = (void *)pg_finfo_hstore_in;
 #endif
 
-  /* Call registered external extension force link if available (priority) */
-  if (pgl_registered_force_link_extensions != NULL)
+  /* Call all registered external extension force link functions */
+  for (int i = 0; i < pgl_num_registered_force_links; i++)
   {
-    pgl_registered_force_link_extensions();
+    if (pgl_registered_force_links[i] != NULL)
+    {
+      pgl_registered_force_links[i]();
+    }
   }
 
   /* Fallback: call weak external extension force link if available */

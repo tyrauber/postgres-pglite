@@ -279,6 +279,26 @@ install: all
 END
   fi
 
+  # Copy hook source files to src/port (linked by all PG binaries including tools).
+  # These implement the pgl_smgr_notify_* and pgl_hooked_pread/pwrite symbols referenced by
+  # smgr.c and port.h when PGL_MOBILE is defined.
+  echo "Patching PostgreSQL source to include mobile hook implementations in libpgport..."
+
+  # Copy hook source files to src/port
+  cp "$REPO_ROOT/mobile-build/pgl_smgr_hooks.c" src/port/
+  cp "$REPO_ROOT/mobile-build/pgl_smgr_hooks.h" src/port/
+  cp "$REPO_ROOT/mobile-build/pgl_io_hooks.c" src/port/
+  cp "$REPO_ROOT/mobile-build/pgl_io_hooks.h" src/port/
+
+  # Patch the port Makefile to include our hook objects in OBJS
+  if ! grep -q "pgl_io_hooks.o" src/port/Makefile; then
+    # Add hooks to the OBJS list (before the first existing .o file)
+    sed -i.bak 's/	bsearch_arg.o \\/	pgl_io_hooks.o \\\
+	pgl_smgr_hooks.o \\\
+	bsearch_arg.o \\/' src/port/Makefile
+    echo "Patched port Makefile to include hook objects"
+  fi
+
   # Build full tree (lets PostgreSQL pick correct backend units), then install headers and data
   "$MAKE_BIN" -j"$NCPU"
   "$MAKE_BIN" install
@@ -424,9 +444,44 @@ build_glue_and_merge() {
   $CC \
     -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
     -I"$REPO_ROOT/mobile-build" -DPGL_MOBILE -fPIC -c "$REPO_ROOT/mobile-build/pgl_mobile_extensions.c" -o pgl_mobile_extensions.o
+  # SMgr hooks for HTTP storage and daemon builds
+  $CC \
+    -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
+    -I"$REPO_ROOT/mobile-build" -DPGL_MOBILE -fPIC -c "$REPO_ROOT/mobile-build/pgl_smgr_hooks.c" -o pgl_smgr_hooks.o
+  # IO hooks for pread/pwrite interception
+  $CC \
+    -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
+    -I"$REPO_ROOT/mobile-build" -DPGL_MOBILE -fPIC -c "$REPO_ROOT/mobile-build/pgl_io_hooks.c" -o pgl_io_hooks.o
+
+  # Compile Snowball stemmers (dict_snowball) for full-text search support
+  # The snowball directory is not compiled as part of the backend (it's a loadable module),
+  # so we need to compile it explicitly for static linking on mobile.
+  echo "Compiling Snowball stemmers for full-text search..."
+  SNOWBALL_DIR="$PGSRC/src/backend/snowball"
+  SNOWBALL_OBJS=""
+
+  # Compile dict_snowball.c (the main PostgreSQL interface)
+  $CC \
+    -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
+    -I"$PGSRC/src/include/snowball" -I"$PGSRC/src/include/snowball/libstemmer" \
+    -DPGL_MOBILE -fPIC -c "$SNOWBALL_DIR/dict_snowball.c" -o dict_snowball.o
+  SNOWBALL_OBJS="dict_snowball.o"
+
+  # Compile libstemmer files (api.c, utilities.c, and all stemmer implementations)
+  for src in "$SNOWBALL_DIR"/libstemmer/*.c; do
+    if [ -f "$src" ]; then
+      objname=$(basename "$src" .c).o
+      $CC \
+        -I"$BUILD_DIR/install/include" -I"$PGSRC/src/include" -I"$PGSRC/src" \
+        -I"$PGSRC/src/include/snowball" -I"$PGSRC/src/include/snowball/libstemmer" \
+        -DPGL_MOBILE -fPIC -c "$src" -o "$objname"
+      SNOWBALL_OBJS="$SNOWBALL_OBJS $objname"
+    fi
+  done
+  echo "Compiled $(echo $SNOWBALL_OBJS | wc -w | tr -d ' ') Snowball object files"
 
   # Glue archive; includes pg_main and mobile shims/stubs
-  "$AR" -r -cs libpglite_glue_mobile.a pg_main.o pgl_mobile_shims.o pgl_backend_stubs.o sdk_port-mobile.o pgl_mobile_comm.o pgl_mobile_extensions.o
+  "$AR" -r -cs libpglite_glue_mobile.a pg_main.o pgl_mobile_shims.o pgl_backend_stubs.o sdk_port-mobile.o pgl_mobile_comm.o pgl_mobile_extensions.o pgl_smgr_hooks.o pgl_io_hooks.o
 
   # Merge core PG libs (reuse the server build outputs like WASM)
   # Prefer consuming installed archives if present; otherwise fall back to server variants in source tree
@@ -469,7 +524,16 @@ build_glue_and_merge() {
   
   # Also add timezone objects which are needed
   find "$PGSRC/src/timezone" -name '*.o' -type f -exec "$AR" -r -u libpgcore_mobile.a {} +
-  
+
+  # Add snowball objects (dict_snowball and stemmers) compiled earlier
+  # These are in the current directory (BUILD_DIR) where we compiled them
+  echo "Adding Snowball objects to libpgcore_mobile.a..."
+  for obj in dict_snowball.o api.o utilities.o stem_*.o; do
+    if [ -f "$obj" ]; then
+      "$AR" -r -u libpgcore_mobile.a "$obj"
+    fi
+  done
+
   rm -rf temp_extract
   popd >/dev/null
 
