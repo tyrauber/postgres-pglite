@@ -48,6 +48,16 @@
 
 #include "postgres_fe.h"
 
+/* ============================================================================
+ * Debug logging control - disabled by default for performance
+ * Build with -DPGL_VERBOSE_LOGGING to enable all debug output
+ * ============================================================================ */
+#ifndef PGL_VERBOSE_LOGGING
+#define PGL_DEBUG_PRINT(...) ((void)0)
+#else
+#define PGL_DEBUG_PRINT(...) fprintf(__VA_ARGS__)
+#endif
+
 #include <dirent.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -1225,13 +1235,13 @@ write_version_file(const char *extrapath)
 	else
 		snprintf(path, sizeof(path), "%s/%s/PG_VERSION", pg_data, extrapath);
 
-	fprintf(stderr, "[initdb] write_version_file path=%s\n", path);
+	PGL_DEBUG_PRINT(stderr, "[initdb] write_version_file path=%s\n", path);
 	if ((version_file = fopen(path, PG_BINARY_W)) == NULL)
 		pg_fatal("could not open file \"%s\" for writing: %m", path);
 	if (fprintf(version_file, "%s\n", PG_MAJORVERSION) < 0 ||
 			fclose(version_file))
 		pg_fatal("could not write file \"%s\": %m", path);
-	fprintf(stderr, "[initdb] write_version_file done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] write_version_file done\n");
 }
 
 /*
@@ -1245,13 +1255,13 @@ set_null_conf(void)
 	char path[MAXPGPATH];
 
 	snprintf(path, sizeof(path), "%s/postgresql.conf", pg_data);
-	fprintf(stderr, "[initdb] set_null_conf path=%s\n", path);
+	PGL_DEBUG_PRINT(stderr, "[initdb] set_null_conf path=%s\n", path);
 	conf_file = fopen(path, PG_BINARY_W);
 	if (conf_file == NULL)
 		pg_fatal("could not open file \"%s\" for writing: %m", path);
 	if (fclose(conf_file))
 		pg_fatal("could not write file \"%s\": %m", path);
-	fprintf(stderr, "[initdb] set_null_conf done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] set_null_conf done\n");
 }
 
 /*
@@ -1891,11 +1901,11 @@ get_su_pwd(void)
 		 * for now.
 		 */
 		FILE *pwf = fopen(pwfilename, "r");
-		fprintf(stderr, "[initdb] trying pwfile=%s\n", pwfilename);
+		PGL_DEBUG_PRINT(stderr, "[initdb] trying pwfile=%s\n", pwfilename);
 
 		if (!pwf)
 		{
-			fprintf(stderr, "[initdb] fopen failed for pwfile=%s errno=%d\n", pwfilename, errno);
+			PGL_DEBUG_PRINT(stderr, "[initdb] fopen failed for pwfile=%s errno=%d\n", pwfilename, errno);
 			pg_fatal("could not open file \"%s\" for reading: %m",
 							 pwfilename);
 		}
@@ -3245,10 +3255,10 @@ void initialize_data_directory(void)
 	umask(pg_mode_mask);
 
 	create_data_directory();
-	fprintf(stderr, "[initdb] create_data_directory done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] create_data_directory done\n");
 
 	create_xlog_or_symlink();
-	fprintf(stderr, "[initdb] create_xlog_or_symlink done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] create_xlog_or_symlink done\n");
 
 	/* Create required subdirectories (other than pg_wal) */
 	printf(_("creating subdirectories ... "));
@@ -3269,43 +3279,43 @@ void initialize_data_directory(void)
 	}
 
 	check_ok();
-	fprintf(stderr, "[initdb] subdirectories created\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] subdirectories created\n");
 
 	/* Top level PG_VERSION is checked by bootstrapper, so make it first */
-	fprintf(stderr, "[initdb] before write_version_file(NULL)\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] before write_version_file(NULL)\n");
 	write_version_file(NULL);
-	fprintf(stderr, "[initdb] after write_version_file(NULL)\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] after write_version_file(NULL)\n");
 
 	/* Select suitable configuration settings */
-	fprintf(stderr, "[initdb] before set_null_conf\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] before set_null_conf\n");
 	set_null_conf();
-	fprintf(stderr, "[initdb] after set_null_conf\n");
-	fprintf(stderr, "[initdb] before test_config_settings\n");
-	fprintf(stderr, "[initdb] About to call test_config_settings()\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] after set_null_conf\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] before test_config_settings\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] About to call test_config_settings()\n");
 	test_config_settings();
-	fprintf(stderr, "[initdb] after test_config_settings\n");
-	fprintf(stderr, "[initdb] test_config_settings() completed\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] after test_config_settings\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] test_config_settings() completed\n");
 
 	/* Now create all the text config files */
-	fprintf(stderr, "[initdb] before setup_config\n");
-	fprintf(stderr, "[initdb] About to call setup_config()\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] before setup_config\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] About to call setup_config()\n");
 	setup_config();
-	fprintf(stderr, "[initdb] after setup_config\n");
-	fprintf(stderr, "[initdb] setup_config() completed\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] after setup_config\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] setup_config() completed\n");
 
 	/* Bootstrap template1 */
-	fprintf(stderr, "[initdb] before bootstrap_template1\n");
-	fprintf(stderr, "[initdb] About to call bootstrap_template1()\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] before bootstrap_template1\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] About to call bootstrap_template1()\n");
 	bootstrap_template1();
-	fprintf(stderr, "[initdb] after bootstrap_template1\n");
-	fprintf(stderr, "[initdb] bootstrap_template1() completed successfully\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] after bootstrap_template1\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] bootstrap_template1() completed successfully\n");
 
 	/*
 	 * Make the per-database PG_VERSION for template1 only after init'ing it
 	 */
-	fprintf(stderr, "[initdb] before write_version_file(base/1)\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] before write_version_file(base/1)\n");
 	write_version_file("base/1");
-	fprintf(stderr, "[initdb] after write_version_file(base/1)\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] after write_version_file(base/1)\n");
 
 	/*
 	 * Create the stuff we don't need to use bootstrap mode for, using a
@@ -3317,21 +3327,21 @@ void initialize_data_directory(void)
 	initPQExpBuffer(&cmd);
 	printfPQExpBuffer(&cmd, "\"%s\" %s %s template1 >%s",
 										backend_exec, backend_options, extra_options, DEVNULL);
-	fprintf(stderr, "[initdb] PG_CMD_OPEN: %s\n", cmd.data);
+	PGL_DEBUG_PRINT(stderr, "[initdb] PG_CMD_OPEN: %s\n", cmd.data);
 	PG_CMD_OPEN(cmd.data);
-	fprintf(stderr, "[initdb] PG_CMD_OPEN done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] PG_CMD_OPEN done\n");
 
 	setup_auth(cmdfd);
-	fprintf(stderr, "[initdb] setup_auth done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] setup_auth done\n");
 
 	setup_run_file(cmdfd, system_constraints_file);
-	fprintf(stderr, "[initdb] system_constraints_file done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] system_constraints_file done\n");
 
 	setup_run_file(cmdfd, system_functions_file);
-	fprintf(stderr, "[initdb] system_functions_file done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] system_functions_file done\n");
 
 	setup_depend(cmdfd);
-	fprintf(stderr, "[initdb] setup_depend done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] setup_depend done\n");
 
 	/*
 	 * Note that no objects created after setup_depend() will be "pinned".
@@ -3339,40 +3349,40 @@ void initialize_data_directory(void)
 	 */
 
 	setup_run_file(cmdfd, system_views_file);
-	fprintf(stderr, "[initdb] system_views_file done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] system_views_file done\n");
 
 	setup_description(cmdfd);
-	fprintf(stderr, "[initdb] setup_description done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] setup_description done\n");
 
 	setup_collation(cmdfd);
-	fprintf(stderr, "[initdb] setup_collation done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] setup_collation done\n");
 
 	setup_run_file(cmdfd, dictionary_file);
-	fprintf(stderr, "[initdb] dictionary_file done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] dictionary_file done\n");
 
 	setup_privileges(cmdfd);
-	fprintf(stderr, "[initdb] setup_privileges done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] setup_privileges done\n");
 
 	setup_schema(cmdfd);
-	fprintf(stderr, "[initdb] setup_schema done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] setup_schema done\n");
 
 	load_plpgsql(cmdfd);
-	fprintf(stderr, "[initdb] load_plpgsql done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] load_plpgsql done\n");
 
 	vacuum_db(cmdfd);
-	fprintf(stderr, "[initdb] vacuum_db done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] vacuum_db done\n");
 
 	make_template0(cmdfd);
-	fprintf(stderr, "[initdb] make_template0 done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] make_template0 done\n");
 
 	make_postgres(cmdfd);
-	fprintf(stderr, "[initdb] make_postgres done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] make_postgres done\n");
 
 	PG_CMD_CLOSE();
 	termPQExpBuffer(&cmd);
 
 	check_ok();
-	fprintf(stderr, "[initdb] initialize_data_directory complete\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] initialize_data_directory complete\n");
 }
 
 /* pglite entry point */
@@ -3386,7 +3396,7 @@ void strconcat(char *p, const char *head, const char *tail);
 
 int pgl_initdb_main()
 {
-	fprintf(stderr, "[pgl_initdb_main] ENTRY: function called\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_initdb_main] ENTRY: function called\n");
 	char *pwfile = NULL;
 	char *pgdata = NULL;
 
@@ -3396,7 +3406,7 @@ int pgl_initdb_main()
 	strconcat(tmpstr, "--pwfile=", PREFIX);
 	pgdata = strcat_alloc("--pgdata=", PGDATA);
 
-	fprintf(stderr, "[pgl_initdb_main] pwfile=%s pgdata=%s\n", pwfile, pgdata);
+	PGL_DEBUG_PRINT(stderr, "[pgl_initdb_main] pwfile=%s pgdata=%s\n", pwfile, pgdata);
 
 	char *argv[] = {
 			strcat_alloc(PREFIX, "/bin/initdb"),
@@ -3413,7 +3423,7 @@ int pgl_initdb_main()
 
 	int argc = sizeof(argv) / sizeof(char *) - 1;
 
-	fprintf(stderr, "[pgl_initdb_main] argc=%d progname=%s\n", argc, argv[0]);
+	PGL_DEBUG_PRINT(stderr, "[pgl_initdb_main] argc=%d progname=%s\n", argc, argv[0]);
 
 #else
 int main(int argc, char *argv[])
@@ -3729,11 +3739,11 @@ int main(int argc, char *argv[])
 	get_restricted_token();
 
 	setup_pgdata();
-	fprintf(stderr, "[initdb] after setup_pgdata: PGDATA=%s\n", pg_data);
+	PGL_DEBUG_PRINT(stderr, "[initdb] after setup_pgdata: PGDATA=%s\n", pg_data);
 	setup_bin_paths(argv[0]);
-	fprintf(stderr, "[initdb] after setup_bin_paths: backend_exec=%s\n", backend_exec);
+	PGL_DEBUG_PRINT(stderr, "[initdb] after setup_bin_paths: backend_exec=%s\n", backend_exec);
 	effective_user = get_id();
-	fprintf(stderr, "[initdb] effective_user=%s username(opt)=%s\n", effective_user, username ? username : "(null)");
+	PGL_DEBUG_PRINT(stderr, "[initdb] effective_user=%s username(opt)=%s\n", effective_user, username ? username : "(null)");
 	if (!username)
 		username = effective_user;
 
@@ -3762,29 +3772,29 @@ int main(int argc, char *argv[])
 
 	if (pwprompt || pwfilename)
 	{
-		fprintf(stderr, "[initdb] get_su_pwd enter: pwprompt=%d pwfilename=%s\n", (int)pwprompt, pwfilename ? pwfilename : "(null)");
+		PGL_DEBUG_PRINT(stderr, "[initdb] get_su_pwd enter: pwprompt=%d pwfilename=%s\n", (int)pwprompt, pwfilename ? pwfilename : "(null)");
 		get_su_pwd();
-		fprintf(stderr, "[initdb] get_su_pwd exit\n");
+		PGL_DEBUG_PRINT(stderr, "[initdb] get_su_pwd exit\n");
 	}
 
 	printf("\n");
 	puts("# 3527:" __FILE__);
-	fprintf(stderr, "[initdb] initializing data directory at %s\n", pg_data);
+	PGL_DEBUG_PRINT(stderr, "[initdb] initializing data directory at %s\n", pg_data);
 	initialize_data_directory();
-	fprintf(stderr, "[initdb] initialize_data_directory done\n");
+	PGL_DEBUG_PRINT(stderr, "[initdb] initialize_data_directory done\n");
 
 	if (do_sync)
 	{
 		fputs(_("syncing data to disk ... "), stdout);
 		fflush(stdout);
-		fprintf(stderr, "[initdb] syncing data\n");
+		PGL_DEBUG_PRINT(stderr, "[initdb] syncing data\n");
 		sync_pgdata(pg_data, PG_VERSION_NUM, sync_method);
 		check_ok();
 	}
 	else
 	{
 		printf(_("\nSync to disk skipped.\nThe data directory might become corrupt if the operating system crashes.\n"));
-		fprintf(stderr, "[initdb] do_sync=false\n");
+		PGL_DEBUG_PRINT(stderr, "[initdb] do_sync=false\n");
 	}
 
 	if (authwarning)
@@ -3831,6 +3841,6 @@ int main(int argc, char *argv[])
 	}
 
 	success = true;
-	fprintf(stderr, "[pgl_initdb_main] SUCCESS: function completing, returning 0\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_initdb_main] SUCCESS: function completing, returning 0\n");
 	return 0;
 }

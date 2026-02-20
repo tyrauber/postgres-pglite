@@ -14,6 +14,16 @@
  */
 #include "postgres.h"
 
+/* Debug logging - disabled by default */
+#ifdef PGL_VERBOSE_LOGGING
+#define PGL_DEBUG_PRINT(...) fprintf(__VA_ARGS__)
+#define PGL_DEBUG_PUTS(s) puts(s)
+#else
+#define PGL_DEBUG_PRINT(...) ((void)0)
+#define PGL_DEBUG_PUTS(s) ((void)0)
+#endif
+
+
 #include <unistd.h>
 #include <signal.h>
 
@@ -211,19 +221,19 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 	int			flag;
 	char	   *userDoption = NULL;
 
-	fprintf(stderr, "[pgl_boot] enter argc=%d argv0=%s\n", argc, argv[0] ? argv[0] : "");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] enter argc=%d argv0=%s\n", argc, argv[0] ? argv[0] : "");
 	for (i = 0; i < argc && i < 20; i++) {
-		fprintf(stderr, "[pgl_boot] argv[%d]=%s\n", i, argv[i] ? argv[i] : "");
+		PGL_DEBUG_PRINT(stderr, "[pgl_boot] argv[%d]=%s\n", i, argv[i] ? argv[i] : "");
 	}
 
 	Assert(!IsUnderPostmaster);
 
 	InitStandaloneProcess(argv[0]);
-	fprintf(stderr, "[pgl_boot] after InitStandaloneProcess\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] after InitStandaloneProcess\n");
 
 	/* Set defaults, to be overridden by explicit options below */
 	InitializeGUCOptions();
-	fprintf(stderr, "[pgl_boot] after InitializeGUCOptions\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] after InitializeGUCOptions\n");
 
 	/* an initial --boot or --check should be present */
 	Assert(argc > 1
@@ -231,16 +241,16 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 			   || strcmp(argv[1], "--check") == 0));
 	argv++;
 	argc--;
-	fprintf(stderr, "[pgl_boot] after --boot adjust argc=%d\n", argc);
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] after --boot adjust argc=%d\n", argc);
 
 	/* reset getopt's global state, as this process is long-lived */
 	opterr = 0; optind = 1; optreset = 1;
 
 	while ((flag = getopt(argc, argv, "B:c:d:D:Fkr:X:-:")) != -1)
 	{
-		fprintf(stderr, "[pgl_boot] getopt flag=%c optarg=%s\n", flag, optarg ? optarg : "");
+		PGL_DEBUG_PRINT(stderr, "[pgl_boot] getopt flag=%c optarg=%s\n", flag, optarg ? optarg : "");
 		if (flag == '?' || flag == ':') {
-			fprintf(stderr, "[pgl_boot] getopt error: flag='?' or ':' -> invalid or missing option value\n");
+			PGL_DEBUG_PRINT(stderr, "[pgl_boot] getopt error: flag='?' or ':' -> invalid or missing option value\n");
 		}
 		switch (flag)
 		{
@@ -254,7 +264,7 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 							   *value;
 
 					ParseLongOption(optarg, &name, &value);
-					fprintf(stderr, "[pgl_boot] -c parsed name=%s value=%s\n", name ? name : "", value ? value : "");
+					PGL_DEBUG_PRINT(stderr, "[pgl_boot] -c parsed name=%s value=%s\n", name ? name : "", value ? value : "");
 					if (!value)
 					{
 						if (flag == '-')
@@ -273,13 +283,13 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 					PG_TRY();
 					{
 						SetConfigOption(name, value, PGC_POSTMASTER, PGC_S_ARGV);
-						fprintf(stderr, "[pgl_boot] -c applied %s=%s\n", name ? name : "", value ? value : "");
+						PGL_DEBUG_PRINT(stderr, "[pgl_boot] -c applied %s=%s\n", name ? name : "", value ? value : "");
 					}
 					PG_CATCH();
 					{
 						ErrorData *edata = CopyErrorData();
 						FlushErrorState();
-						fprintf(stderr, "[pgl_boot] -c SetConfigOption failed for %s=%s: %s", name ? name : "", value ? value : "", edata && edata->message ? edata->message : "");
+						PGL_DEBUG_PRINT(stderr, "[pgl_boot] -c SetConfigOption failed for %s=%s: %s", name ? name : "", value ? value : "", edata && edata->message ? edata->message : "");
 						if (edata && edata->detail)
 							fprintf(stderr, " detail=%s", edata->detail);
 						if (edata && edata->filename)
@@ -295,7 +305,7 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 				}
 			case 'D':
 				userDoption = pstrdup(optarg);
-				fprintf(stderr, "[pgl_boot] saw -D %s\n", userDoption);
+				PGL_DEBUG_PRINT(stderr, "[pgl_boot] saw -D %s\n", userDoption);
 				break;
 			case 'd':
 				{
@@ -341,46 +351,46 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 	}
 
 	/* Acquire configuration parameters */
-	fprintf(stderr, "[pgl_boot] calling SelectConfigFiles D=%s PGDATA(env)=%s\n", userDoption ? userDoption : "", getenv("PGDATA") ? getenv("PGDATA") : "");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] calling SelectConfigFiles D=%s PGDATA(env)=%s\n", userDoption ? userDoption : "", getenv("PGDATA") ? getenv("PGDATA") : "");
 	if (!SelectConfigFiles(userDoption, progname))
 #if defined(PGL_MOBILE)
 	{
-		fprintf(stderr, "[pgl_boot] SelectConfigFiles failed (D=%s)\n", userDoption ? userDoption : "");
+		PGL_DEBUG_PRINT(stderr, "[pgl_boot] SelectConfigFiles failed (D=%s)\n", userDoption ? userDoption : "");
 		return;
 	}
 #else
 		proc_exit(1);
 #endif
-	fprintf(stderr, "[pgl_boot] SelectConfigFiles ok DataDir=%s\n", DataDir ? DataDir : "");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] SelectConfigFiles ok DataDir=%s\n", DataDir ? DataDir : "");
 
 	/*
 	 * Validate we have been given a reasonable-looking DataDir and change
 	 * into it
 	 */
-	fprintf(stderr, "[pgl_boot] before checkDataDir\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] before checkDataDir\n");
 	checkDataDir();
-	fprintf(stderr, "[pgl_boot] checkDataDir ok (DataDir=%s)\n", DataDir ? DataDir : "");
-	fprintf(stderr, "[pgl_boot] before ChangeToDataDir\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] checkDataDir ok (DataDir=%s)\n", DataDir ? DataDir : "");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] before ChangeToDataDir\n");
 	ChangeToDataDir();
 	{
-		char cwd[1024]; if (getcwd(cwd, sizeof(cwd))) fprintf(stderr, "[pgl_boot] cwd after ChangeToDataDir=%s\n", cwd);
+		char cwd[1024]; if (getcwd(cwd, sizeof(cwd))) PGL_DEBUG_PRINT(stderr, "[pgl_boot] cwd after ChangeToDataDir=%s\n", cwd);
 	}
 
-	fprintf(stderr, "[pgl_boot] before CreateDataDirLockFile\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] before CreateDataDirLockFile\n");
 	CreateDataDirLockFile(false);
-	fprintf(stderr, "[pgl_boot] CreateDataDirLockFile ok\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] CreateDataDirLockFile ok\n");
 
-	fprintf(stderr, "[pgl_boot] before SetProcessingMode(BootstrapProcessing)\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] before SetProcessingMode(BootstrapProcessing)\n");
 	SetProcessingMode(BootstrapProcessing);
 	IgnoreSystemIndexes = true;
 
-	fprintf(stderr, "[pgl_boot] before InitializeMaxBackends\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] before InitializeMaxBackends\n");
 	InitializeMaxBackends();
-	fprintf(stderr, "[pgl_boot] after InitializeMaxBackends\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] after InitializeMaxBackends\n");
 
-	fprintf(stderr, "[pgl_boot] before CreateSharedMemoryAndSemaphores\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] before CreateSharedMemoryAndSemaphores\n");
 	CreateSharedMemoryAndSemaphores();
-	fprintf(stderr, "[pgl_boot] after CreateSharedMemoryAndSemaphores\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] after CreateSharedMemoryAndSemaphores\n");
 
 	/*
 	 * XXX: It might make sense to move this into its own function at some
@@ -402,9 +412,9 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 	BaseInit();
 
 	bootstrap_signals();
-	fprintf(stderr, "[pgl_boot] before BootStrapXLOG\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] before BootStrapXLOG\n");
 	BootStrapXLOG();
-	fprintf(stderr, "[pgl_boot] after BootStrapXLOG\n");
+	PGL_DEBUG_PRINT(stderr, "[pgl_boot] after BootStrapXLOG\n");
 
 	/*
 	 * To ensure that src/common/link-canary.c is linked into the backend, we
@@ -414,47 +424,47 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 		elog(ERROR, "backend is incorrectly linked to frontend functions");
 
 	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, 0, NULL);
-puts("[pgl_boot] 001: InitPostgres returned"); 
+PGL_DEBUG_PUTS("[pgl_boot] 001: InitPostgres returned"); 
 
 	/* Initialize stuff for bootstrap-file processing */
-puts("[pgl_boot] 002: initializing attrtypes array"); 
+PGL_DEBUG_PUTS("[pgl_boot] 002: initializing attrtypes array"); 
 	for (i = 0; i < MAXATTR; i++)
 	{
 		attrtypes[i] = NULL;
 		Nulls[i] = false;
 	}
-puts("[pgl_boot] 003: attrtypes array initialized"); 
+PGL_DEBUG_PUTS("[pgl_boot] 003: attrtypes array initialized"); 
 
 
 	/*
 	 * Process bootstrap input.
 	 */
-puts("[pgl_boot] 004: calling StartTransactionCommand()"); 
+PGL_DEBUG_PUTS("[pgl_boot] 004: calling StartTransactionCommand()"); 
 	StartTransactionCommand();
-puts("[pgl_boot] 005: StartTransactionCommand() done"); 
+PGL_DEBUG_PUTS("[pgl_boot] 005: StartTransactionCommand() done"); 
 
-puts("[pgl_boot] 006: calling boot_yyparse()"); 
+PGL_DEBUG_PUTS("[pgl_boot] 006: calling boot_yyparse()"); 
 	boot_yyparse();
-puts("[pgl_boot] 007: boot_yyparse() done"); 
-puts("[pgl_boot] 008: calling CommitTransactionCommand()"); 
+PGL_DEBUG_PUTS("[pgl_boot] 007: boot_yyparse() done"); 
+PGL_DEBUG_PUTS("[pgl_boot] 008: calling CommitTransactionCommand()"); 
 	CommitTransactionCommand();
-puts("[pgl_boot] 009: CommitTransactionCommand() done"); 
+PGL_DEBUG_PUTS("[pgl_boot] 009: CommitTransactionCommand() done"); 
 
 	/*
 	 * We should now know about all mapped relations, so it's okay to write
 	 * out the initial relation mapping files.
 	 */
-puts("[pgl_boot] 010: calling RelationMapFinishBootstrap()"); 
+PGL_DEBUG_PUTS("[pgl_boot] 010: calling RelationMapFinishBootstrap()"); 
 	RelationMapFinishBootstrap();
-puts("[pgl_boot] 011: RelationMapFinishBootstrap() done"); 
+PGL_DEBUG_PUTS("[pgl_boot] 011: RelationMapFinishBootstrap() done"); 
 
 	/* Clean up and exit */
-puts("[pgl_boot] 012: calling cleanup()"); 
+PGL_DEBUG_PUTS("[pgl_boot] 012: calling cleanup()"); 
 	cleanup();
-puts("[pgl_boot] 013: cleanup() done"); 
+PGL_DEBUG_PUTS("[pgl_boot] 013: cleanup() done"); 
 #if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
 #if defined(PGL_MOBILE)
-puts("[pgl_boot] 014: returning (mobile)"); 
+PGL_DEBUG_PUTS("[pgl_boot] 014: returning (mobile)"); 
 	return;
 #else
 	proc_exit(0);

@@ -19,6 +19,13 @@
  */
 #include "postgres.h"
 
+/* Debug logging - disabled by default */
+#ifdef PGL_VERBOSE_LOGGING
+#define PGL_DEBUG_PUTS(s) puts(s)
+#else
+#define PGL_DEBUG_PUTS(s) ((void)0)
+#endif
+
 #include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -459,25 +466,25 @@ void on_proc_exit(pg_on_exit_callback function, Datum arg) {
  * ----------------------------------------------------------------
  */
 void before_shmem_exit(pg_on_exit_callback function, Datum arg) {
-puts("[before_shmem_exit] entered");
+PGL_DEBUG_PUTS("[before_shmem_exit] entered");
   if (before_shmem_exit_index >= MAX_ON_EXITS)
     ereport(FATAL, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
                     errmsg_internal("out of before_shmem_exit slots")));
 
-puts("[before_shmem_exit] adding to list");
+PGL_DEBUG_PUTS("[before_shmem_exit] adding to list");
   before_shmem_exit_list[before_shmem_exit_index].function = function;
   before_shmem_exit_list[before_shmem_exit_index].arg = arg;
 
   ++before_shmem_exit_index;
-puts("[before_shmem_exit] checking atexit");
+PGL_DEBUG_PUTS("[before_shmem_exit] checking atexit");
 
   if (!atexit_callback_setup) {
-puts("[before_shmem_exit] calling atexit()");
+PGL_DEBUG_PUTS("[before_shmem_exit] calling atexit()");
     atexit(atexit_callback);
-puts("[before_shmem_exit] atexit() done");
+PGL_DEBUG_PUTS("[before_shmem_exit] atexit() done");
     atexit_callback_setup = true;
   }
-puts("[before_shmem_exit] returning");
+PGL_DEBUG_PUTS("[before_shmem_exit] returning");
 }
 
 /* ----------------------------------------------------------------

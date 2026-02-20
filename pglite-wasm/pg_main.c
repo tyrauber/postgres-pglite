@@ -17,6 +17,18 @@
 
 #include "pgl_os.h"
 
+// ============================================================================
+// Debug logging control - disabled by default for performance
+// Build with -DPGL_VERBOSE_LOGGING to enable all debug output
+// ============================================================================
+#ifndef PGL_VERBOSE_LOGGING
+#define PGL_DEBUG_PRINT(...) ((void)0)
+#define PGL_DEBUG_FLUSH(s) ((void)0)
+#else
+#define PGL_DEBUG_PRINT(...) fprintf(__VA_ARGS__)
+#define PGL_DEBUG_FLUSH(s) fflush(s)
+#endif
+
 #ifdef PGL_MOBILE
 #include <dirent.h>  /* For directory listing in debug code */
 #include <unistd.h>  /* For unlink, rmdir */
@@ -223,7 +235,7 @@ static void pgl_boot_emit_hook(ErrorData *ed)
 {
     if (ed && ed->elevel >= ERROR)
     {
-        fprintf(stderr, "[pgl_boot] %s:%d %s: %s\n",
+        PGL_DEBUG_PRINT(stderr, "[pgl_boot] %s:%d %s: %s\n",
                 ed->filename ? ed->filename : "?",
                 ed->lineno,
                 ed->funcname ? ed->funcname : "?",
@@ -495,7 +507,7 @@ extra_env:;
 
     // get default or set default if not set
     PREFIX = setdefault("PREFIX", WASM_PREFIX);
-    fprintf(stderr, "[pgl_main] PREFIX=%s PGDATA=%s PGSYSCONFDIR=%s ANDROID_RUNTIME_DIR=%s\n", PREFIX, PGDATA ? PGDATA : "", getenv("PGSYSCONFDIR") ? getenv("PGSYSCONFDIR") : "", getenv("ANDROID_RUNTIME_DIR") ? getenv("ANDROID_RUNTIME_DIR") : "");
+    PGL_DEBUG_PRINT(stderr, "[pgl_main] PREFIX=%s PGDATA=%s PGSYSCONFDIR=%s ANDROID_RUNTIME_DIR=%s\n", PREFIX, PGDATA ? PGDATA : "", getenv("PGSYSCONFDIR") ? getenv("PGSYSCONFDIR") : "", getenv("ANDROID_RUNTIME_DIR") ? getenv("ANDROID_RUNTIME_DIR") : "");
     argv[0] = strcat_alloc(PREFIX, "/bin/postgres");
 
 #if defined(__EMSCRIPTEN__)
@@ -649,7 +661,7 @@ void main_post()
         const char *pr = (PREFIX && ((const char *)PREFIX)[0]) ? (const char *)PREFIX : WASM_PREFIX;
         strconcat(__argv0_buf, pr, "/bin/postgres");
         argv0_local = __argv0_buf;
-        fprintf(stderr, "[pgl_main] main_post fallback argv0=%s (g_argv missing)\n", argv0_local);
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] main_post fallback argv0=%s (g_argv missing)\n", argv0_local);
         PGL_LOG_ERROR("[main_post] *** Using fallback argv0: %s ***", argv0_local);
     }
     PGL_LOG_ERROR("[main_post] *** About to call set_pglocale_pgservice with argv0=%s ***", argv0_local ? argv0_local : "NULL");
@@ -700,11 +712,11 @@ extern void pgl_mobile_init_extensions(void);
 __attribute__((export_name("pgl_backend"))) int pgl_backend()
 {
     /* IMMEDIATE logging - before anything else */
-    fprintf(stderr, "[pgl_backend] B001: IMMEDIATE ENTRY - function called\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B001: IMMEDIATE ENTRY - function called\n");
     fflush(stderr);
 
 #ifdef PGL_MOBILE
-    fprintf(stderr, "[pgl_backend] B002: About to call pgl_mobile_force_link_extensions()\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B002: About to call pgl_mobile_force_link_extensions()\n");
     fflush(stderr);
 
     /* CRITICAL: Call this first to ensure extension symbols are linked.
@@ -713,7 +725,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
      */
     pgl_mobile_force_link_extensions();
 
-    fprintf(stderr, "[pgl_backend] B003: pgl_mobile_force_link_extensions() completed\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B003: pgl_mobile_force_link_extensions() completed\n");
     fflush(stderr);
 
     PGL_LOG_ERROR("%s", "[pgl_backend] B004: ENTRY: pgl_backend function called");
@@ -725,12 +737,12 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
      * or app re-initializing). If already initialized, just return - the backend
      * is ready to process queries via interactive_one().
      */
-    fprintf(stderr, "[pgl_backend] B006: Checking pgl_backend_initialized=%d\n", pgl_backend_initialized);
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B006: Checking pgl_backend_initialized=%d\n", pgl_backend_initialized);
     fflush(stderr);
     if (pgl_backend_initialized)
     {
         PGL_LOG_INFO("[pgl_backend] Backend already initialized, skipping re-init");
-        fprintf(stderr, "[pgl_backend] B007: Backend already initialized in this process, skipping\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B007: Backend already initialized in this process, skipping\n");
         fflush(stderr);
         return 0; /* Success - already initialized */
     }
@@ -745,18 +757,18 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
      *
      * We MUST reset these before any shared memory operations to ensure clean state.
      */
-    fprintf(stderr, "[pgl_backend] B008: Resetting shared memory and process state\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B008: Resetting shared memory and process state\n");
     fflush(stderr);
 
     PglMobileResetShmemState();
-    fprintf(stderr, "[pgl_backend] B009: PglMobileResetShmemState() done\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B009: PglMobileResetShmemState() done\n");
     fflush(stderr);
 
     PglMobileResetProcState();
-    fprintf(stderr, "[pgl_backend] B010: PglMobileResetProcState() done\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B010: PglMobileResetProcState() done\n");
     fflush(stderr);
 #endif
-    fprintf(stderr, "[pgl_backend] B011: Past mobile-specific init\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B011: Past mobile-specific init\n");
     fflush(stderr);
 #ifdef __ANDROID__
     static int pgl_android_log_inited = 0;
@@ -777,7 +789,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
         strconcat(__pgbuf, pr, "/base");
         PGDATA = (volatile char *)setdefault("PGDATA", __pgbuf);
     }
-    fprintf(stderr, "[pgl_backend] guards: PREFIX=%s PGDATA=%s PGUSER=%s\n", pr, PGDATA ? (const char *)PGDATA : "", PGUSER ? (const char *)PGUSER : "");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] guards: PREFIX=%s PGDATA=%s PGUSER=%s\n", pr, PGDATA ? (const char *)PGDATA : "", PGUSER ? (const char *)PGUSER : "");
 #if PGDEBUG
     print_bits(sizeof(pgl_idb_status), &pgl_idb_status);
 #endif
@@ -833,12 +845,12 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     */
 #endif
 
-    fprintf(stderr, "[pgl_backend] B012: async_restart=%d\n", async_restart);
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B012: async_restart=%d\n", async_restart);
     fflush(stderr);
     if (async_restart)
     {
         // old 487
-        fprintf(stderr, "[pgl_backend] B013: Taking async_restart=1 path (new DB or mobile)\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B013: Taking async_restart=1 path (new DB or mobile)\n");
         fflush(stderr);
         PGL_LOG_ERROR("[pgl_backend] *** Taking async_restart=1 path (new DB or mobile) ***");
 
@@ -900,13 +912,13 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
                 snprintf(ctrl_path, sizeof(ctrl_path), "%s/global/pg_control", PGDATA);
                 struct stat st;
                 int rc = stat(ctrl_path, &st);
-                fprintf(stderr, "[pgl_main] pre-single ctrl=%s rc=%d errno=%d size=%lld\n",
+                PGL_DEBUG_PRINT(stderr, "[pgl_main] pre-single ctrl=%s rc=%d errno=%d size=%lld\n",
                         ctrl_path, rc, errno, (long long)((rc == 0) ? st.st_size : 0));
             }
-            fprintf(stderr, "[pgl_backend] B014: About to call RePostgresSingleUserMain(argc=%d)\n", single_argc);
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B014: About to call RePostgresSingleUserMain(argc=%d)\n", single_argc);
             fflush(stderr);
             RePostgresSingleUserMain(single_argc, single_argv, PGUSER);
-            fprintf(stderr, "[pgl_backend] B015: RePostgresSingleUserMain() returned\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B015: RePostgresSingleUserMain() returned\n");
             fflush(stderr);
             // Log control file presence post-single-user
             {
@@ -914,13 +926,13 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
                 snprintf(ctrl_path, sizeof(ctrl_path), "%s/global/pg_control", PGDATA);
                 struct stat st;
                 int rc = stat(ctrl_path, &st);
-                fprintf(stderr, "[pgl_main] post-single ctrl=%s rc=%d errno=%d size=%lld\n",
+                PGL_DEBUG_PRINT(stderr, "[pgl_main] post-single ctrl=%s rc=%d errno=%d size=%lld\n",
                         ctrl_path, rc, errno, (long long)((rc == 0) ? st.st_size : 0));
             }
         }
         else
         {
-            fprintf(stderr, "[pgl_main] skipping initdb single-user replay due to PGL_SKIP_SINGLE=1\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] skipping initdb single-user replay due to PGL_SKIP_SINGLE=1\n");
         }
         //        AsyncPostgresSingleUserMain(single_argc, single_argv, PGUSER, async_restart);
         PDEBUG("# 365: initdb faking shutdown to complete WAL/OID states in single mode");
@@ -933,11 +945,11 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
          * Check if PgStartTime is 0 (not yet set) to determine if init is needed.
          */
 #ifdef PGL_MOBILE
-        fprintf(stderr, "[pgl_backend] B016: Checking PgStartTime=%lld\n", (long long)PgStartTime);
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B016: Checking PgStartTime=%lld\n", (long long)PgStartTime);
         fflush(stderr);
         if (PgStartTime == 0)
         {
-            fprintf(stderr, "[pgl_backend] B017: PgStartTime==0, need to init shared memory\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017: PgStartTime==0, need to init shared memory\n");
             fflush(stderr);
             PGL_LOG_INFO("[pgl_backend] Shared memory not initialized, initializing now...");
 
@@ -951,7 +963,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
                 pgl_boot_jmp = NULL;
                 pgl_jmp_context = PGL_JMP_NONE;
                 PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during shmem init, returning");
-                fprintf(stderr, "[pgl_backend] proc_exit intercepted during shmem init, returning\n");
+                PGL_DEBUG_PRINT(stderr, "[pgl_backend] proc_exit intercepted during shmem init, returning\n");
                 return -1; /* Error - shmem init failed */
             }
 
@@ -959,13 +971,13 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
              * This is the proper PostgreSQL startup path for a standalone backend. */
 
             /* Step 1: Initialize memory context system */
-            fprintf(stderr, "[pgl_backend] B017a: Calling MemoryContextInit()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017a: Calling MemoryContextInit()\n");
             fflush(stderr);
             if (TopMemoryContext == NULL)
                 MemoryContextInit();
             else
                 CurrentMemoryContext = TopMemoryContext;
-            fprintf(stderr, "[pgl_backend] B017b: MemoryContextInit() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017b: MemoryContextInit() done\n");
             fflush(stderr);
 
             /* Step 2: Initialize standalone process (latches, signals, process globals).
@@ -975,37 +987,37 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
                 const char *pr = (PREFIX && ((const char *)PREFIX)[0]) ? (const char *)PREFIX : WASM_PREFIX;
                 char argv0_buf[256];
                 snprintf(argv0_buf, sizeof(argv0_buf), "%s/bin/postgres", pr);
-                fprintf(stderr, "[pgl_backend] B017c: Calling InitStandaloneProcess(%s)\n", argv0_buf);
+                PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017c: Calling InitStandaloneProcess(%s)\n", argv0_buf);
                 fflush(stderr);
                 InitStandaloneProcess(argv0_buf);
-                fprintf(stderr, "[pgl_backend] B017d: InitStandaloneProcess() done\n");
+                PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017d: InitStandaloneProcess() done\n");
                 fflush(stderr);
             }
 
             /* Step 3: Initialize GUC options */
-            fprintf(stderr, "[pgl_backend] B017e: Calling InitializeGUCOptions()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017e: Calling InitializeGUCOptions()\n");
             fflush(stderr);
             InitializeGUCOptions();
-            fprintf(stderr, "[pgl_backend] B017f: InitializeGUCOptions() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017f: InitializeGUCOptions() done\n");
             fflush(stderr);
 
             /* Step 4: Set DataDir and chdir */
-            fprintf(stderr, "[pgl_backend] B017g: Setting DataDir to %s\n", PGDATA);
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017g: Setting DataDir to %s\n", PGDATA);
             fflush(stderr);
             SetDataDir((const char *)PGDATA);
             if (chdir(PGDATA) != 0)
-                fprintf(stderr, "[pgl_backend] WARNING: chdir(%s) failed errno=%d\n", PGDATA, errno);
-            fprintf(stderr, "[pgl_backend] B017h: DataDir set, now=%s\n", DataDir ? DataDir : "NULL");
+                PGL_DEBUG_PRINT(stderr, "[pgl_backend] WARNING: chdir(%s) failed errno=%d\n", PGDATA, errno);
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017h: DataDir set, now=%s\n", DataDir ? DataDir : "NULL");
             fflush(stderr);
 
             /* Step 5: Load config files (postgresql.conf) */
-            fprintf(stderr, "[pgl_backend] B017i: Calling SelectConfigFiles()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017i: Calling SelectConfigFiles()\n");
             fflush(stderr);
             if (!SelectConfigFiles(NULL, "postgres"))
             {
-                fprintf(stderr, "[pgl_backend] WARNING: SelectConfigFiles failed, continuing anyway\n");
+                PGL_DEBUG_PRINT(stderr, "[pgl_backend] WARNING: SelectConfigFiles failed, continuing anyway\n");
             }
-            fprintf(stderr, "[pgl_backend] B017j: SelectConfigFiles() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B017j: SelectConfigFiles() done\n");
             fflush(stderr);
 
 #ifdef PGL_MOBILE
@@ -1015,94 +1027,94 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
             if (pgl_archiving_enabled)
             {
                 XLogArchiveMode = ARCHIVE_MODE_ON;
-                fprintf(stderr, "[pgl_backend] archive_mode set to ON (pgl_enable_archiving)\n");
+                PGL_DEBUG_PRINT(stderr, "[pgl_backend] archive_mode set to ON (pgl_enable_archiving)\n");
                 fflush(stderr);
             }
 #endif
 
             /* Read control file */
-            fprintf(stderr, "[pgl_backend] B018: Calling LocalProcessControlFile()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B018: Calling LocalProcessControlFile()\n");
             fflush(stderr);
             LocalProcessControlFile(false);
-            fprintf(stderr, "[pgl_backend] B019: LocalProcessControlFile() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B019: LocalProcessControlFile() done\n");
             fflush(stderr);
 
             /* Load preload libraries */
-            fprintf(stderr, "[pgl_backend] B020: Calling process_shared_preload_libraries()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B020: Calling process_shared_preload_libraries()\n");
             fflush(stderr);
             process_shared_preload_libraries();
-            fprintf(stderr, "[pgl_backend] B021: process_shared_preload_libraries() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B021: process_shared_preload_libraries() done\n");
             fflush(stderr);
 
             /* Initialize MaxBackends - required for shared memory sizing */
-            fprintf(stderr, "[pgl_backend] B022: Calling InitializeMaxBackends()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B022: Calling InitializeMaxBackends()\n");
             fflush(stderr);
             InitializeMaxBackends();
-            fprintf(stderr, "[pgl_backend] B023: InitializeMaxBackends() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B023: InitializeMaxBackends() done\n");
             fflush(stderr);
 
             /* Process shared memory requests */
-            fprintf(stderr, "[pgl_backend] B024: Calling process_shmem_requests()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B024: Calling process_shmem_requests()\n");
             fflush(stderr);
             process_shmem_requests();
-            fprintf(stderr, "[pgl_backend] B025: process_shmem_requests() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B025: process_shmem_requests() done\n");
             fflush(stderr);
 
             /* Initialize shared memory GUCs */
-            fprintf(stderr, "[pgl_backend] B026: Calling InitializeShmemGUCs()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B026: Calling InitializeShmemGUCs()\n");
             fflush(stderr);
             InitializeShmemGUCs();
-            fprintf(stderr, "[pgl_backend] B027: InitializeShmemGUCs() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B027: InitializeShmemGUCs() done\n");
             fflush(stderr);
 
             /* Initialize WAL consistency checking */
-            fprintf(stderr, "[pgl_backend] B028: Calling InitializeWalConsistencyChecking()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B028: Calling InitializeWalConsistencyChecking()\n");
             fflush(stderr);
             InitializeWalConsistencyChecking();
-            fprintf(stderr, "[pgl_backend] B029: InitializeWalConsistencyChecking() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B029: InitializeWalConsistencyChecking() done\n");
             fflush(stderr);
 
             /* CRITICAL: Initialize shared memory and semaphores */
-            fprintf(stderr, "[pgl_backend] B030: Calling CreateSharedMemoryAndSemaphores()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B030: Calling CreateSharedMemoryAndSemaphores()\n");
             fflush(stderr);
             CreateSharedMemoryAndSemaphores();
-            fprintf(stderr, "[pgl_backend] B031: CreateSharedMemoryAndSemaphores() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B031: CreateSharedMemoryAndSemaphores() done\n");
             fflush(stderr);
 
             /* Record startup time */
             PgStartTime = GetCurrentTimestamp();
-            fprintf(stderr, "[pgl_backend] B032: PgStartTime set\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B032: PgStartTime set\n");
             fflush(stderr);
 
             /* Create per-backend PGPROC struct */
-            fprintf(stderr, "[pgl_backend] B033: Calling InitProcess()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B033: Calling InitProcess()\n");
             fflush(stderr);
             InitProcess();
-            fprintf(stderr, "[pgl_backend] B034: InitProcess() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B034: InitProcess() done\n");
             fflush(stderr);
 
             /* Set processing mode - SetProcessingMode is a macro */
             SetProcessingMode(InitProcessing);
-            fprintf(stderr, "[pgl_backend] B035: SetProcessingMode done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B035: SetProcessingMode done\n");
             fflush(stderr);
 
             /* Early initialization - sets up smgr, buffer pool, VFD */
-            fprintf(stderr, "[pgl_backend] B036: Calling BaseInit()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B036: Calling BaseInit()\n");
             fflush(stderr);
             BaseInit();
-            fprintf(stderr, "[pgl_backend] B037: BaseInit() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037: BaseInit() done\n");
             fflush(stderr);
 
             /* Initialize timeout infrastructure - MUST be before InitPostgres
              * which calls RegisterTimeout for deadlock, statement, lock timeouts */
-            fprintf(stderr, "[pgl_backend] B037a1: Calling InitializeTimeouts()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037a1: Calling InitializeTimeouts()\n");
             fflush(stderr);
             InitializeTimeouts();
-            fprintf(stderr, "[pgl_backend] B037a2: InitializeTimeouts() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037a2: InitializeTimeouts() done\n");
             fflush(stderr);
 
             /* Unblock signals - InitPostgres needs SIGALRM for timeouts */
-            fprintf(stderr, "[pgl_backend] B037a: Unblocking signals\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037a: Unblocking signals\n");
             fflush(stderr);
             {
                 extern sigset_t UnBlockSig;
@@ -1124,7 +1136,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
              *   - Session user
              * Without this, DDL (CREATE TABLE etc.) will crash in hash_search
              * because catalog/relcache hash tables don't exist. */
-            fprintf(stderr, "[pgl_backend] B037b: Calling InitPostgres()\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037b: Calling InitPostgres()\n");
             fflush(stderr);
             {
                 const char *dbname = "template1";
@@ -1133,28 +1145,28 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
                 InitPostgres(dbname, InvalidOid, username, InvalidOid,
                              INIT_PG_LOAD_SESSION_LIBS, NULL);
             }
-            fprintf(stderr, "[pgl_backend] B037c: InitPostgres() done\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037c: InitPostgres() done\n");
             fflush(stderr);
 
             /* Switch to normal processing mode */
             SetProcessingMode(NormalProcessing);
-            fprintf(stderr, "[pgl_backend] B037d: NormalProcessing mode set\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] B037d: NormalProcessing mode set\n");
             fflush(stderr);
 
             /* Clear jump buffer after successful init */
             pgl_boot_jmp = NULL;
             pgl_jmp_context = PGL_JMP_NONE;
             PGL_LOG_INFO("[pgl_backend] Full backend initialization complete (shmem + catalogs)");
-            fprintf(stderr, "[pgl_backend] Full backend initialization complete\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_backend] Full backend initialization complete\n");
         }
 #endif
 
-        fprintf(stderr, "[pgl_backend] B038: About to goto backend_started\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B038: About to goto backend_started\n");
         fflush(stderr);
         goto backend_started;
     }
 
-    fprintf(stderr, "[pgl_backend] B039: Taking existing database path (async_restart=0)\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B039: Taking existing database path (async_restart=0)\n");
     fflush(stderr);
 
 #ifdef PGL_MOBILE
@@ -1166,7 +1178,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
      * and returns -2. The cold-start init path (PgStartTime==0 block) was
      * designed for the daemon use case and handles errors gracefully.
      */
-    fprintf(stderr, "[pgl_backend] B039a: PGL_MOBILE existing DB — using cold-start init path\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B039a: PGL_MOBILE existing DB — using cold-start init path\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_backend] Existing DB on mobile/daemon — using cold-start init");
 
@@ -1178,7 +1190,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
         pgl_boot_jmp = NULL;
         pgl_jmp_context = PGL_JMP_NONE;
         PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during existing DB init");
-        fprintf(stderr, "[pgl_backend] proc_exit intercepted during existing DB init\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] proc_exit intercepted during existing DB init\n");
         return -2;
     }
 
@@ -1202,11 +1214,11 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     /* Step 4: Set DataDir */
     SetDataDir((const char *)PGDATA);
     if (chdir(PGDATA) != 0)
-        fprintf(stderr, "[pgl_backend] WARNING: chdir(%s) failed errno=%d\n", PGDATA, errno);
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] WARNING: chdir(%s) failed errno=%d\n", PGDATA, errno);
 
     /* Step 5: Config files */
     if (!SelectConfigFiles(NULL, "postgres"))
-        fprintf(stderr, "[pgl_backend] WARNING: SelectConfigFiles failed, continuing\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] WARNING: SelectConfigFiles failed, continuing\n");
 
 #ifdef PGL_MOBILE
     /* Enable WAL archiving if requested via pgl_enable_archiving().
@@ -1215,7 +1227,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     if (pgl_archiving_enabled)
     {
         XLogArchiveMode = ARCHIVE_MODE_ON;
-        fprintf(stderr, "[pgl_backend] archive_mode set to ON (pgl_enable_archiving)\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] archive_mode set to ON (pgl_enable_archiving)\n");
     }
 #endif
 
@@ -1277,25 +1289,25 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     pgl_boot_jmp = NULL;
     pgl_jmp_context = PGL_JMP_NONE;
     PGL_LOG_INFO("[pgl_backend] Existing DB cold-start init complete");
-    fprintf(stderr, "[pgl_backend] B039b: Existing DB cold-start init complete\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B039b: Existing DB cold-start init complete\n");
     fflush(stderr);
 
     goto backend_started;
 #endif /* PGL_MOBILE */
 
     PGL_LOG_ERROR("[pgl_backend] *** About to enter main_post() for existing database ***");
-    fprintf(stderr, "[pgl_main] entering main_post (before single-user resume) g_argv=%p g_argv0=%s DataDir=%s\n",
+    PGL_DEBUG_PRINT(stderr, "[pgl_main] entering main_post (before single-user resume) g_argv=%p g_argv0=%s DataDir=%s\n",
             (void *)g_argv,
             (g_argv && g_argv[0]) ? g_argv[0] : "",
             DataDir ? DataDir : "");
-    fprintf(stderr, "[pgl_backend] B061: Calling main_post()\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B061: Calling main_post()\n");
     fflush(stderr);
     PGL_LOG_ERROR("[pgl_backend] *** Calling main_post() now ***");
     main_post();
-    fprintf(stderr, "[pgl_backend] B062: main_post() returned\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B062: main_post() returned\n");
     fflush(stderr);
     PGL_LOG_ERROR("[pgl_backend] *** main_post() returned successfully ***");
-    fprintf(stderr, "[pgl_main] returned from main_post\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_main] returned from main_post\n");
 
     // Build resuming single-user argv dynamically to avoid empty args
     char *single_argv[24];
@@ -1310,7 +1322,7 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
         const char *pr = (PREFIX && ((const char *)PREFIX)[0]) ? (const char *)PREFIX : WASM_PREFIX;
         strconcat(__argv0_buf, pr, "/bin/postgres");
         single_argv0 = __argv0_buf;
-        fprintf(stderr, "[pgl_backend] Using fallback argv0: %s\n", single_argv0);
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] Using fallback argv0: %s\n", single_argv0);
     }
     int single_argc = 0;
     single_argv[single_argc++] = (char *)single_argv0;
@@ -1366,52 +1378,52 @@ __attribute__((export_name("pgl_backend"))) int pgl_backend()
     
     pgl_boot_jmp = &pgl_backend_jmp_buf;
     pgl_jmp_context = PGL_JMP_BACKEND;
-    fprintf(stderr, "[pgl_backend] *** pgl_boot_jmp set to %p (static buffer at %p, size=%zu, context=BACKEND) ***\n", 
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] *** pgl_boot_jmp set to %p (static buffer at %p, size=%zu, context=BACKEND) ***\n", 
             (void*)pgl_boot_jmp, (void*)&pgl_backend_jmp_buf, sizeof(pgl_backend_jmp_buf));
     
     /* Verify the pointer is valid before sigsetjmp */
     if ((uintptr_t)pgl_boot_jmp < 0x10000) {
-        fprintf(stderr, "[pgl_backend] FATAL: pgl_boot_jmp has invalid address %p!\n", (void*)pgl_boot_jmp);
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] FATAL: pgl_boot_jmp has invalid address %p!\n", (void*)pgl_boot_jmp);
         return -1;
     }
     
     if (sigsetjmp(pgl_backend_jmp_buf, 1) != 0)
     {
-        fprintf(stderr, "[pgl_backend] *** sigsetjmp returned non-zero (longjmp occurred) ***\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] *** sigsetjmp returned non-zero (longjmp occurred) ***\n");
         pgl_boot_jmp = NULL;
         pgl_jmp_context = PGL_JMP_NONE;
         PGL_LOG_ERROR("[pgl_backend] proc_exit intercepted during backend init, returning");
-        fprintf(stderr, "[pgl_backend] proc_exit intercepted during backend init, returning\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] proc_exit intercepted during backend init, returning\n");
         return -2; /* Error - backend init failed (proc_exit called) */
     }
-    fprintf(stderr, "[pgl_backend] B057: sigsetjmp returned 0, proceeding to AsyncPostgresSingleUserMain\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B057: sigsetjmp returned 0, proceeding to AsyncPostgresSingleUserMain\n");
     fflush(stderr);
 #endif
 
-    fprintf(stderr, "[pgl_backend] B058: About to call AsyncPostgresSingleUserMain(argc=%d)\n", single_argc_save);
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B058: About to call AsyncPostgresSingleUserMain(argc=%d)\n", single_argc_save);
     fflush(stderr);
     AsyncPostgresSingleUserMain(single_argc_save, single_argv, PGUSER, async_restart);
-    fprintf(stderr, "[pgl_backend] B059: AsyncPostgresSingleUserMain() returned\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B059: AsyncPostgresSingleUserMain() returned\n");
     fflush(stderr);
 
 #ifdef PGL_MOBILE
     /* Clear jump buffer after successful init - CRITICAL for query execution safety */
     pgl_boot_jmp = NULL;
     pgl_jmp_context = PGL_JMP_NONE;
-    fprintf(stderr, "[pgl_backend] B060: pgl_boot_jmp cleared after AsyncPostgresSingleUserMain\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B060: pgl_boot_jmp cleared after AsyncPostgresSingleUserMain\n");
     fflush(stderr);
 #endif
 
 backend_started:;
-    fprintf(stderr, "[pgl_backend] B040: Reached backend_started label\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B040: Reached backend_started label\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_backend] Reached backend_started label");
     IsPostmasterEnvironment = true;
-    fprintf(stderr, "[pgl_backend] B041: IsPostmasterEnvironment = true\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B041: IsPostmasterEnvironment = true\n");
     fflush(stderr);
 
 #ifdef PGL_MOBILE
-    fprintf(stderr, "[pgl_backend] B042: Starting mobile-specific backend state initialization\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B042: Starting mobile-specific backend state initialization\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] Starting mobile-specific backend state initialization");
 
@@ -1420,13 +1432,13 @@ backend_started:;
     extern MemoryContext row_description_context;
     extern StringInfoData row_description_buf;
 
-    fprintf(stderr, "[pgl_backend] B043: row_description_context = %p\n", (void *)row_description_context);
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B043: row_description_context = %p\n", (void *)row_description_context);
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] row_description_context = %p", (void *)row_description_context);
 
     if (row_description_context == NULL)
     {
-        fprintf(stderr, "[pgl_backend] B044: Creating row_description_context\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B044: Creating row_description_context\n");
         fflush(stderr);
         PGL_LOG_INFO("[pgl_mobile] Initializing row_description_context for wire protocol");
         row_description_context = AllocSetContextCreate(TopMemoryContext,
@@ -1435,34 +1447,34 @@ backend_started:;
         MemoryContext oldcontext = MemoryContextSwitchTo(row_description_context);
         initStringInfo(&row_description_buf);
         MemoryContextSwitchTo(oldcontext);
-        fprintf(stderr, "[pgl_backend] B045: row_description_context created at %p\n", (void *)row_description_context);
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B045: row_description_context created at %p\n", (void *)row_description_context);
         fflush(stderr);
         PGL_LOG_INFO("[pgl_mobile] row_description_context created at %p", (void *)row_description_context);
     }
 
     /* Ensure MessageContext exists for protocol message handling */
-    fprintf(stderr, "[pgl_backend] B046: MessageContext = %p\n", (void *)MessageContext);
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B046: MessageContext = %p\n", (void *)MessageContext);
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] MessageContext = %p", (void *)MessageContext);
 
     if (MessageContext == NULL)
     {
-        fprintf(stderr, "[pgl_backend] B047: Creating MessageContext\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B047: Creating MessageContext\n");
         fflush(stderr);
         PGL_LOG_INFO("[pgl_mobile] Initializing MessageContext for protocol handling");
         MessageContext = AllocSetContextCreate(TopMemoryContext,
                                                "MessageContext",
                                                ALLOCSET_DEFAULT_SIZES);
-        fprintf(stderr, "[pgl_backend] B048: MessageContext created at %p\n", (void *)MessageContext);
+        PGL_DEBUG_PRINT(stderr, "[pgl_backend] B048: MessageContext created at %p\n", (void *)MessageContext);
         fflush(stderr);
         PGL_LOG_INFO("[pgl_mobile] MessageContext created at %p", (void *)MessageContext);
     }
     /* Initialize mobile communication methods before any backend processing */
-    fprintf(stderr, "[pgl_backend] B049: Installing mobile communication methods\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B049: Installing mobile communication methods\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] Installing mobile communication methods");
     pgl_install_mobile_comm();
-    fprintf(stderr, "[pgl_backend] B050: pgl_install_mobile_comm() done\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B050: pgl_install_mobile_comm() done\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] Mobile communication methods installed successfully");
 
@@ -1474,21 +1486,21 @@ backend_started:;
      *
      * See: docs/issues/pglite-ios-device-crash.md
      */
-    fprintf(stderr, "[pgl_backend] B051: Initializing extensions (plpgsql, etc.)\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B051: Initializing extensions (plpgsql, etc.)\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] Initializing extensions (plpgsql, etc.)");
     pgl_mobile_init_extensions();
-    fprintf(stderr, "[pgl_backend] B052: pgl_mobile_init_extensions() done\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B052: pgl_mobile_init_extensions() done\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] Extension initialization complete");
 
-    fprintf(stderr, "[pgl_backend] B053: Mobile backend state initialization complete\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B053: Mobile backend state initialization complete\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_mobile] Mobile backend state initialization complete");
 
     /* Mark backend as initialized - subsequent calls to pgl_backend() will skip re-init */
     pgl_backend_initialized = true;
-    fprintf(stderr, "[pgl_backend] B054: pgl_backend_initialized = true\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B054: pgl_backend_initialized = true\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_backend] Backend initialization complete, pgl_backend_initialized=true");
 #endif
@@ -1505,11 +1517,11 @@ backend_started:;
 #endif
     }
 #ifdef PGL_MOBILE
-    fprintf(stderr, "[pgl_backend] B055: About to return 0 (success)\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B055: About to return 0 (success)\n");
     fflush(stderr);
     PGL_LOG_INFO("[pgl_backend] EXIT: function completing successfully");
 #endif
-    fprintf(stderr, "[pgl_backend] B056: RETURNING 0\n");
+    PGL_DEBUG_PRINT(stderr, "[pgl_backend] B056: RETURNING 0\n");
     fflush(stderr);
     return 0; /* Success */
 }
@@ -1538,7 +1550,7 @@ int pgl_initdb()
     {
         PGDATA = setdefault("PGDATA", _pgbuf);
     }
-    fprintf(stderr, "[pgl_initdb] PREFIX=%s PGDATA=%s PGUSER=%s PGSYSCONFDIR=%s\n", PREFIX ? (const char *)PREFIX : "", PGDATA ? (const char *)PGDATA : "", PGUSER ? (const char *)PGUSER : "", getenv("PGSYSCONFDIR") ? getenv("PGSYSCONFDIR") : "");
+    PGL_DEBUG_PRINT(stderr, "[pgl_initdb] PREFIX=%s PGDATA=%s PGUSER=%s PGSYSCONFDIR=%s\n", PREFIX ? (const char *)PREFIX : "", PGDATA ? (const char *)PGDATA : "", PGUSER ? (const char *)PGUSER : "", getenv("PGSYSCONFDIR") ? getenv("PGSYSCONFDIR") : "");
 
     /* Initialize progname for mobile library mode */
     if (!progname)
@@ -1609,7 +1621,7 @@ int pgl_initdb()
     if (!chdir(PGDATA))
     {
         int __has_pgversion = (access("PG_VERSION", F_OK) == 0);
-        fprintf(stderr, "[pgl_initdb] chdir PGDATA ok; PG_VERSION=%s force=%d\n", __has_pgversion ? "yes" : "no", __force_initdb ? 1 : 0);
+        PGL_DEBUG_PRINT(stderr, "[pgl_initdb] chdir PGDATA ok; PG_VERSION=%s force=%d\n", __has_pgversion ? "yes" : "no", __force_initdb ? 1 : 0);
         PGL_LOG_INFO("[pgl_initdb] Database exists check: PG_VERSION=%s force=%d", __has_pgversion ? "yes" : "no", __force_initdb ? 1 : 0);
         
 #ifdef PGL_MOBILE
@@ -1673,17 +1685,17 @@ int pgl_initdb()
             if (!has_valid_control) {
                 /* Database is corrupt - must delete and reinitialize */
                 PGL_LOG_ERROR("[pgl_initdb] *** CORRUPT DATABASE DETECTED - REMOVING AND REINITIALIZING ***");
-                fprintf(stderr, "[pgl_initdb] Removing corrupt database at %s\n", (const char *)PGDATA);
+                PGL_DEBUG_PRINT(stderr, "[pgl_initdb] Removing corrupt database at %s\n", (const char *)PGDATA);
 
                 chdir("/");  /* Must exit PGDATA before removing it */
 
                 int rm_result = pgl_remove_directory_recursive((const char *)PGDATA);
                 if (rm_result == 0) {
                     PGL_LOG_INFO("[pgl_initdb] Corrupt database removed successfully");
-                    fprintf(stderr, "[pgl_initdb] Corrupt database removed, will reinitialize\n");
+                    PGL_DEBUG_PRINT(stderr, "[pgl_initdb] Corrupt database removed, will reinitialize\n");
                 } else {
                     PGL_LOG_ERROR("[pgl_initdb] Failed to remove corrupt database (rc=%d)", rm_result);
-                    fprintf(stderr, "[pgl_initdb] WARNING: Failed to fully remove corrupt database\n");
+                    PGL_DEBUG_PRINT(stderr, "[pgl_initdb] WARNING: Failed to fully remove corrupt database\n");
                 }
 
                 /* Fall through to run initdb - do NOT goto initdb_done */
@@ -1715,7 +1727,7 @@ run_initdb:
     }
     else
     {
-        fprintf(stderr, "[pgl_initdb] chdir PGDATA failed (dir missing?) path=%s errno=%d\n", PGDATA ? (const char *)PGDATA : "", errno);
+        PGL_DEBUG_PRINT(stderr, "[pgl_initdb] chdir PGDATA failed (dir missing?) path=%s errno=%d\n", PGDATA ? (const char *)PGDATA : "", errno);
         PGL_LOG_INFO("[pgl_initdb] chdir PGDATA failed, will run initdb");
 #if PGDEBUG
         fprintf(stderr, "# 439: pg_initdb db folder not found at : %s\n", PGDATA);
@@ -1729,19 +1741,19 @@ run_initdb:
     int initdb_rc = pgl_initdb_safe();
     if (initdb_rc != 0)
     {
-        fprintf(stderr, "[pgl_main] pgl_initdb_safe returned error: %d\n", initdb_rc);
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] pgl_initdb_safe returned error: %d\n", initdb_rc);
         PGL_LOG_INFO("[pgl_initdb] initdb failed with exit code %d", initdb_rc);
         return pgl_idb_status | IDB_FAILED;
     }
 #else
     int initdb_rc = pgl_initdb_main();
 #endif
-    fprintf(stderr, "[pgl_main] pgl_initdb_main rc=%d\n", initdb_rc);
+    PGL_DEBUG_PRINT(stderr, "[pgl_main] pgl_initdb_main rc=%d\n", initdb_rc);
     PGL_LOG_INFO("[pgl_initdb] pgl_initdb_main() returned %d", initdb_rc);
     const char *skip_replay = getenv("PGL_SKIP_REPLAY");
     if (skip_replay && skip_replay[0] == '1')
     {
-        fprintf(stderr, "[pgl_main] skipping boot replay due to PGL_SKIP_REPLAY=1\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] skipping boot replay due to PGL_SKIP_REPLAY=1\n");
         goto initdb_done;
     }
 
@@ -1756,7 +1768,7 @@ run_initdb:
         snprintf(ctrl_path, sizeof(ctrl_path), "%s/global/pg_control", PGDATA);
         struct stat st;
         int rc = stat(ctrl_path, &st);
-        fprintf(stderr, "[pgl_main] pre-boot ctrl=%s rc=%d errno=%d size=%lld\n",
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] pre-boot ctrl=%s rc=%d errno=%d size=%lld\n",
                 ctrl_path, rc, errno, (long long)((rc == 0) ? st.st_size : 0));
         if (sysconf)
         {
@@ -1764,12 +1776,12 @@ run_initdb:
             snprintf(bki_path, sizeof(bki_path), "%s/postgres.bki", sysconf);
             struct stat sb;
             int rcb = stat(bki_path, &sb);
-            fprintf(stderr, "[pgl_main] pre-boot bki=%s rc=%d errno=%d size=%lld\n",
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] pre-boot bki=%s rc=%d errno=%d size=%lld\n",
                     bki_path, rcb, errno, (long long)((rcb == 0) ? sb.st_size : 0));
         }
         else
         {
-            fprintf(stderr, "[pgl_main] pre-boot PGSYSCONFDIR not set\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] pre-boot PGSYSCONFDIR not set\n");
         }
     }
     /* save stdin and use previous initdb output to feed boot mode */
@@ -1780,15 +1792,15 @@ run_initdb:
     int saved_stdin = open("/dev/null", O_RDONLY);
     if (saved_stdin < 0)
     {
-        fprintf(stderr, "[pgl_main] open(/dev/null) failed: %d\n", errno);
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] open(/dev/null) failed: %d\n", errno);
         return pgl_idb_status;
     }
-    fprintf(stderr, "[pgl_main] PGL_MOBILE: using /dev/null as saved_stdin=%d\n", saved_stdin);
+    PGL_DEBUG_PRINT(stderr, "[pgl_main] PGL_MOBILE: using /dev/null as saved_stdin=%d\n", saved_stdin);
 #else
     int saved_stdin = dup(STDIN_FILENO);
     if (saved_stdin < 0)
     {
-        fprintf(stderr, "[pgl_main] dup(STDIN) failed: %d\n", errno);
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] dup(STDIN) failed: %d\n", errno);
         return pgl_idb_status;
     }
 #endif
@@ -1798,10 +1810,10 @@ run_initdb:
         char __pipe_path[1024];
         extern void pgl_get_pipe_path(int stage, char *out, size_t outsz);
         pgl_get_pipe_path(0, __pipe_path, sizeof(__pipe_path));
-        fprintf(stderr, "[pgl_main] boot pipe path=%s\n", __pipe_path);
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] boot pipe path=%s\n", __pipe_path);
         struct stat __bp_st;
         int __bp_rc = stat(__pipe_path, &__bp_st);
-        fprintf(stderr, "[pgl_main] boot pipe stat rc=%d errno=%d size=%lld\n", __bp_rc, errno, (long long)((__bp_rc == 0) ? __bp_st.st_size : 0));
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] boot pipe stat rc=%d errno=%d size=%lld\n", __bp_rc, errno, (long long)((__bp_rc == 0) ? __bp_st.st_size : 0));
         FILE *fr = freopen(__pipe_path, "r", stdin);
 #else
         FILE *fr = freopen(IDB_PIPE_BOOT, "r", stdin);
@@ -1809,9 +1821,9 @@ run_initdb:
         if (!fr)
         {
 #ifdef PGL_MOBILE
-            fprintf(stderr, "[pgl_main] freopen boot failed for %s errno=%d\n", __pipe_path, errno);
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] freopen boot failed for %s errno=%d\n", __pipe_path, errno);
 #else
-            fprintf(stderr, "[pgl_main] freopen boot failed for %s errno=%d\n", IDB_PIPE_BOOT, errno);
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] freopen boot failed for %s errno=%d\n", IDB_PIPE_BOOT, errno);
 #endif
             // attempt to restore STDIN before returning
             dup2(saved_stdin, STDIN_FILENO);
@@ -1832,7 +1844,7 @@ run_initdb:
             strconcat(__argv0_buf, pr, "/bin/postgres");
             boot_argv0 = __argv0_buf;
         }
-        fprintf(stderr, "[pgl_main] boot argv0=%s\n", boot_argv0);
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] boot argv0=%s\n", boot_argv0);
 
         // Build argv dynamically to avoid inserting empty arguments (e.g., when WASM_PGOPTS is "")
         char *boot_argv[32];
@@ -1888,12 +1900,12 @@ run_initdb:
         optarg = NULL;
 
         // Log argv for diagnosis
-        fprintf(stderr, "[pgl_main] boot argc=%d argv:", boot_argc);
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] boot argc=%d argv:", boot_argc);
         // Ensure working directory is PGDATA for any relative paths during bootstrap.
         // Also set backend DataDir explicitly so ChangeToDataDir() and path resolvers match.
         if (chdir((const char *)PGDATA) != 0)
         {
-            fprintf(stderr, "[pgl_main] chdir(PGDATA) failed errno=%d\n", errno);
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] chdir(PGDATA) failed errno=%d\n", errno);
         }
         SetDataDir((const char *)PGDATA);
 
@@ -1917,7 +1929,7 @@ run_initdb:
             if (__boot_log)
             {
                 setvbuf(stderr, NULL, _IONBF, 0); // unbuffer stderr so crashes don't lose logs
-                fprintf(stderr, "[pgl_main] appending bootstrap logs to %s\n", appendLog);
+                PGL_DEBUG_PRINT(stderr, "[pgl_main] appending bootstrap logs to %s\n", appendLog);
             }
         }
 
@@ -1930,7 +1942,7 @@ run_initdb:
             /* Ensure we clear PG_exception_stack to avoid dangling pointer after longjmp */
             PG_exception_stack = NULL;
             __boot_err = true;
-            fprintf(stderr, "[pgl_main] BootstrapModeMain exited via error (longjmp), continuing without proc_exit\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] BootstrapModeMain exited via error (longjmp), continuing without proc_exit\n");
         }
         else
         {
@@ -1940,7 +1952,7 @@ run_initdb:
             const char *argv0_boot = (boot_argv && boot_argv[0] && boot_argv[0][0]) ? boot_argv[0] : (g_argv && g_argv[0] ? g_argv[0] : "postgres");
             set_pglocale_pgservice(argv0_boot, PG_TEXTDOMAIN("initdb"));
             PG_exception_stack = &__boot_jmp;
-            fprintf(stderr, "[pgl_main] calling BootstrapModeMain\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] calling BootstrapModeMain\n");
             PGL_LOG_INFO("%s", "[pgl_main] About to call BootstrapModeMain");
             // Also redirect stderr to initdb.stderr.log so ereport lands there
             char errlog[1024];
@@ -1964,7 +1976,7 @@ run_initdb:
             {
                 pgl_boot_jmp = NULL;
                 pgl_jmp_context = PGL_JMP_NONE;
-                fprintf(stderr, "[pgl_boot] proc_exit intercepted during bootstrap, continuing\n");
+                PGL_DEBUG_PRINT(stderr, "[pgl_boot] proc_exit intercepted during bootstrap, continuing\n");
                 PGL_LOG_INFO("%s", "[pgl_boot] proc_exit intercepted during bootstrap");
             }
             else
@@ -1975,7 +1987,7 @@ run_initdb:
             }
             pgl_boot_jmp = NULL;
             pgl_jmp_context = PGL_JMP_NONE;
-            fprintf(stderr, "[pgl_main] BootstrapModeMain returned normally\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] BootstrapModeMain returned normally\n");
             PGL_LOG_ERROR("%s", "[pgl_main] *** BootstrapModeMain phase completed ***");
         }
         PGL_LOG_ERROR("%s", "[pgl_main] *** About to clear PG_exception_stack ***");
@@ -2023,11 +2035,11 @@ run_initdb:
         // Restore stdin to /dev/null. Use freopen() which works on all libc
         // implementations (glibc, musl, bionic). Direct assignment to stdin
         // (stdin = fopen(...)) crashes on musl where stdin is a macro/constant.
-        fprintf(stderr, "[pgl_main] PGL_MOBILE: freopen /dev/null for stdin\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] PGL_MOBILE: freopen /dev/null for stdin\n");
         PGL_LOG_INFO("%s", "[pgl_main] Reopening /dev/null for stdin via freopen");
         if (!freopen("/dev/null", "r", stdin))
         {
-            fprintf(stderr, "[pgl_main] freopen(/dev/null, stdin) failed errno=%d\n", errno);
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] freopen(/dev/null, stdin) failed errno=%d\n", errno);
             PGL_LOG_ERROR("[pgl_main] freopen(/dev/null, stdin) failed errno=%d", errno);
         }
         else
@@ -2040,25 +2052,25 @@ run_initdb:
         /* Desktop/WASM: restore original stdin from saved_stdin */
         if (dup2(saved_stdin, STDIN_FILENO) < 0)
         {
-            fprintf(stderr, "[pgl_main] dup2 restore STDIN failed errno=%d\n", errno);
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] dup2 restore STDIN failed errno=%d\n", errno);
             close(saved_stdin);
             return pgl_idb_status;
         }
         close(saved_stdin);
-        fprintf(stderr, "[pgl_main] restoring stdin after dup2\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] restoring stdin after dup2\n");
         clearerr(stdin);  // reset EOF/error on stdin after dup2 restore
 #endif
-        fprintf(stderr, "[pgl_main] stdin restoration completed\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] stdin restoration completed\n");
         PGL_LOG_INFO("%s", "[pgl_main] stdin restoration phase completed");
         // Do NOT exit the process; just continue to allow backend to start
         if (__boot_err)
         {
-            fprintf(stderr, "[pgl_main] initdb boot replay completed with errors\n");
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] initdb boot replay completed with errors\n");
             // Diagnostics: current cwd, DataDir, and first few lines of boot file
             char cwd_buf[1024];
             if (getcwd(cwd_buf, sizeof(cwd_buf)))
             {
-                fprintf(stderr, "[pgl_main] cwd=%s DataDir=%s\n", cwd_buf, DataDir ? DataDir : "");
+                PGL_DEBUG_PRINT(stderr, "[pgl_main] cwd=%s DataDir=%s\n", cwd_buf, DataDir ? DataDir : "");
             }
             // Log global dir existence
             {
@@ -2066,7 +2078,7 @@ run_initdb:
                 struct stat gst;
                 snprintf(gpath, sizeof(gpath), "%s/global", PGDATA);
                 int grc = stat(gpath, &gst);
-                fprintf(stderr, "[pgl_main] global dir stat rc=%d errno=%d\n", grc, errno);
+                PGL_DEBUG_PRINT(stderr, "[pgl_main] global dir stat rc=%d errno=%d\n", grc, errno);
             }
             // Dump first 25 lines of boot stream
 #ifdef PGL_MOBILE
@@ -2077,7 +2089,7 @@ run_initdb:
                 FILE *f = fopen(pipe_path, "r");
                 if (f)
                 {
-                    fprintf(stderr, "[pgl_main] boot head:\n");
+                    PGL_DEBUG_PRINT(stderr, "[pgl_main] boot head:\n");
                     char line[256];
                     int n = 0;
                     while (n < 25 && fgets(line, sizeof(line), f))
@@ -2086,12 +2098,12 @@ run_initdb:
                         n++;
                     }
                     if (!feof(f))
-                        fprintf(stderr, "[pgl_main] ... (truncated)\n");
+                        PGL_DEBUG_PRINT(stderr, "[pgl_main] ... (truncated)\n");
                     fclose(f);
                 }
                 else
                 {
-                    fprintf(stderr, "[pgl_main] cannot open boot file for head: %s errno=%d\n", pipe_path, errno);
+                    PGL_DEBUG_PRINT(stderr, "[pgl_main] cannot open boot file for head: %s errno=%d\n", pipe_path, errno);
                 }
             }
 #else
@@ -2099,7 +2111,7 @@ run_initdb:
                 FILE *f = fopen(IDB_PIPE_BOOT, "r");
                 if (f)
                 {
-                    fprintf(stderr, "[pgl_main] boot head:\n");
+                    PGL_DEBUG_PRINT(stderr, "[pgl_main] boot head:\n");
                     char line[256];
                     int n = 0;
                     while (n < 25 && fgets(line, sizeof(line), f))
@@ -2108,12 +2120,12 @@ run_initdb:
                         n++;
                     }
                     if (!feof(f))
-                        fprintf(stderr, "[pgl_main] ... (truncated)\n");
+                        PGL_DEBUG_PRINT(stderr, "[pgl_main] ... (truncated)\n");
                     fclose(f);
                 }
                 else
                 {
-                    fprintf(stderr, "[pgl_main] cannot open boot file for head: %s errno=%d\n", IDB_PIPE_BOOT, errno);
+                    PGL_DEBUG_PRINT(stderr, "[pgl_main] cannot open boot file for head: %s errno=%d\n", IDB_PIPE_BOOT, errno);
                 }
             }
 #endif
@@ -2129,12 +2141,12 @@ run_initdb:
             snprintf(ctrl_path, sizeof(ctrl_path), "%s/global/pg_control", PGDATA);
             struct stat st;
             int rc = stat(ctrl_path, &st);
-            fprintf(stderr, "[pgl_main] post-boot ctrl=%s rc=%d errno=%d size=%lld\n",
+            PGL_DEBUG_PRINT(stderr, "[pgl_main] post-boot ctrl=%s rc=%d errno=%d size=%lld\n",
                     ctrl_path, rc, errno, (long long)((rc == 0) ? st.st_size : 0));
             PGL_LOG_INFO("[pgl_main] post-boot ctrl=%s rc=%d errno=%d size=%lld",
                          ctrl_path, rc, errno, (long long)((rc == 0) ? st.st_size : 0));
         }
-        fprintf(stderr, "[pgl_main] bootstrap section completed successfully\n");
+        PGL_DEBUG_PRINT(stderr, "[pgl_main] bootstrap section completed successfully\n");
         PGL_LOG_ERROR("%s", "[pgl_main] *** BOOTSTRAP SECTION COMPLETED SUCCESSFULLY ***");
         PGL_LOG_ERROR("%s", "[pgl_main] *** EXITING BOOTSTRAP BLOCK ***");
     }
@@ -2194,7 +2206,7 @@ initdb_done:;
     PGL_LOG_INFO("[pgl_initdb] EXIT: returning %d", pgl_idb_status);
     PGL_LOG_ERROR("%s", "[pgl_initdb] *** FINAL: About to return from pgl_initdb function ***");
     PGL_LOG_ERROR("%s", "[pgl_initdb] *** If you see this message, pgl_initdb completed successfully ***");
-    fprintf(stderr, "[pgl_initdb] *** RETURNING FROM pgl_initdb WITH STATUS %d ***\n", pgl_idb_status);
+    PGL_DEBUG_PRINT(stderr, "[pgl_initdb] *** RETURNING FROM pgl_initdb WITH STATUS %d ***\n", pgl_idb_status);
     PGL_LOG_ERROR("%s", "[pgl_initdb] *** ABOUT TO EXECUTE RETURN STATEMENT ***");
     return pgl_idb_status;
 } // pgl_initdb

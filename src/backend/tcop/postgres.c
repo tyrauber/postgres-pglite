@@ -385,13 +385,7 @@ SocketBackend(StringInfo inBuf)
 	 */
 	HOLD_CANCEL_INTERRUPTS();
 	pq_startmsgread();
-#ifdef PGL_MOBILE
-	elog(LOG, "SocketBackend: after pq_startmsgread()");
-#endif
 	qtype = pq_getbyte();
-#ifdef PGL_MOBILE
-	elog(LOG, "SocketBackend: pq_getbyte() returned %d ('%c')", qtype, qtype > 0 && qtype < 127 ? qtype : '?');
-#endif
 
 	if (qtype == EOF)			/* frontend disconnected */
 	{
@@ -494,19 +488,10 @@ SocketBackend(StringInfo inBuf)
 	 * after the type code; we can read the message contents independently of
 	 * the type.
 	 */
-#ifdef PGL_MOBILE
-	elog(LOG, "SocketBackend: calling pq_getmessage() with maxmsglen=%d", maxmsglen);
-#endif
 	if (pq_getmessage(inBuf, maxmsglen))
 	{
-#ifdef PGL_MOBILE
-		elog(LOG, "SocketBackend: pq_getmessage() failed, returning EOF");
-#endif
 		return EOF;				/* suitable message already logged */
 	}
-#ifdef PGL_MOBILE
-	elog(LOG, "SocketBackend: pq_getmessage() succeeded, inBuf->len=%d", inBuf->len);
-#endif
 	RESUME_CANCEL_INTERRUPTS();
 
 	return qtype;

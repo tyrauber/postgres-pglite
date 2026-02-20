@@ -1305,15 +1305,10 @@ pq_startmsgread(void)
 			PqSendBuffer = (char*)pgl_mobile_cma_buffer_addr + cma_rsize + 2;
 			PqSendBufferSize = pgl_mobile_cma_buffer_size - cma_rsize - 2;
 			
-			elog(LOG, "pq_startmsgread: mobile CMA setup - rsize=%d, buffer_addr=%p, recv_buf=%p, send_buf=%p, send_size=%d", 
-				 cma_rsize, pgl_mobile_cma_buffer_addr, PqRecvBuffer, PqSendBuffer, PqSendBufferSize);
-			elog(LOG, "pq_startmsgread: buffer state - PqRecvPointer=%d, PqRecvLength=%d, remaining=%zd", 
-				 PqRecvPointer, PqRecvLength, pq_buffer_remaining_data());
 		} else if (PqRecvLength > 0) {
 			/* No input but have stale buffer state - reset it to prevent infinite retry */
 			PqRecvPointer = 0;
 			PqRecvLength = 0;
-			elog(LOG, "pq_startmsgread: reset stale buffer state (rsize=0)");
 		}
 	}
 #elif defined(__EMSCRIPTEN__) || defined(__wasi__)

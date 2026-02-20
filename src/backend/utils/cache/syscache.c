@@ -106,16 +106,23 @@ static int	oid_compare(const void *a, const void *b);
  * to complete initialization of a cache happens upon first use
  * of that cache.
  */
+/* Debug logging - disabled by default */
+#ifdef PGL_VERBOSE_LOGGING
+#define PGL_DEBUG_PUTS(s) puts(s)
+#else
+#define PGL_DEBUG_PUTS(s) ((void)0)
+#endif
+
 void
 InitCatalogCache(void)
 {
 	int			cacheId;
 
-puts("[InitCatalogCache] 001: entered");
+PGL_DEBUG_PUTS("[InitCatalogCache] 001: entered");
 	Assert(!CacheInitialized);
 
 	SysCacheRelationOidSize = SysCacheSupportingRelOidSize = 0;
-puts("[InitCatalogCache] 002: starting loop");
+PGL_DEBUG_PUTS("[InitCatalogCache] 002: starting loop");
 
 	for (cacheId = 0; cacheId < SysCacheSize; cacheId++)
 	{
@@ -146,29 +153,29 @@ puts("[InitCatalogCache] 002: starting loop");
 		/* see comments for RelationInvalidatesSnapshotsOnly */
 		Assert(!RelationInvalidatesSnapshotsOnly(cacheinfo[cacheId].reloid));
 	}
-puts("[InitCatalogCache] 003: loop done");
+PGL_DEBUG_PUTS("[InitCatalogCache] 003: loop done");
 
 	Assert(SysCacheRelationOidSize <= lengthof(SysCacheRelationOid));
 	Assert(SysCacheSupportingRelOidSize <= lengthof(SysCacheSupportingRelOid));
 
 	/* Sort and de-dup OID arrays, so we can use binary search. */
-puts("[InitCatalogCache] 004: calling qsort");
+PGL_DEBUG_PUTS("[InitCatalogCache] 004: calling qsort");
 	qsort(SysCacheRelationOid, SysCacheRelationOidSize,
 		  sizeof(Oid), oid_compare);
 	SysCacheRelationOidSize =
 		qunique(SysCacheRelationOid, SysCacheRelationOidSize, sizeof(Oid),
 				oid_compare);
-puts("[InitCatalogCache] 005: first qsort done");
+PGL_DEBUG_PUTS("[InitCatalogCache] 005: first qsort done");
 
 	qsort(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize,
 		  sizeof(Oid), oid_compare);
 	SysCacheSupportingRelOidSize =
 		qunique(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize,
 				sizeof(Oid), oid_compare);
-puts("[InitCatalogCache] 006: second qsort done");
+PGL_DEBUG_PUTS("[InitCatalogCache] 006: second qsort done");
 
 	CacheInitialized = true;
-puts("[InitCatalogCache] 007: complete");
+PGL_DEBUG_PUTS("[InitCatalogCache] 007: complete");
 }
 
 /*

@@ -39,7 +39,11 @@ int pgl_get_log_level(void);
 
 // ============================================================================
 // Unified logging macros for all platforms
+// VERBOSE LOGGING IS DISABLED BY DEFAULT for performance.
+// To enable, build with -DPGL_VERBOSE_LOGGING
 // ============================================================================
+#ifdef PGL_VERBOSE_LOGGING
+
 #ifdef PGL_MOBILE
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -65,6 +69,25 @@ int pgl_get_log_level(void);
 #define PGL_LOG_INFO(...) fprintf(stderr, __VA_ARGS__)
 #define PGL_LOG_ERROR(...) fprintf(stderr, __VA_ARGS__)
 #define PGL_LOG_WARN(...) fprintf(stderr, __VA_ARGS__)
+#endif
+
+#else // !PGL_VERBOSE_LOGGING - Default: logging disabled for performance
+
+#define PGL_LOG(level, ...) ((void)0)
+#define PGL_LOG_INFO(...) ((void)0)
+#define PGL_LOG_ERROR(...) ((void)0)
+#define PGL_LOG_WARN(...) ((void)0)
+
+#endif // PGL_VERBOSE_LOGGING
+
+// ============================================================================
+// Debug fprintf wrapper - disabled by default for performance
+// Use this for [pgl_backend], [RePostgresSingleUserMain], [initdb], etc.
+// ============================================================================
+#ifdef PGL_VERBOSE_LOGGING
+#define PGL_DEBUG_FPRINTF(stream, fmt, ...) do { fprintf(stream, fmt, ##__VA_ARGS__); fflush(stream); } while(0)
+#else
+#define PGL_DEBUG_FPRINTF(stream, fmt, ...) ((void)0)
 #endif
 
 // Debug logging controlled by PGDEBUG flag (like PDEBUG in WASM)

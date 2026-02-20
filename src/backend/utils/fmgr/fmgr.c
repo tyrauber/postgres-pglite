@@ -386,8 +386,23 @@ fmgr_info_C_lang(Oid functionId, FmgrInfo *finfo, HeapTuple procedureTuple)
 		user_fn = load_external_function(probinstring, prosrcstring, true,
 										 &libraryhandle);
 
+#ifdef PGL_VERBOSE_LOGGING
+		/* Minimal diagnostic: write directly to fd 2 to avoid stdio buffering */
+		{
+			const char msg[] = "[FMGR] fetch_finfo_record...\n";
+			(void)write(2, msg, sizeof(msg) - 1);
+		}
+#endif
+
 		/* Get the function information record (real or default) */
 		inforec = fetch_finfo_record(libraryhandle, prosrcstring);
+
+#ifdef PGL_VERBOSE_LOGGING
+		{
+			const char msg[] = "[FMGR] fetch_finfo_record OK\n";
+			(void)write(2, msg, sizeof(msg) - 1);
+		}
+#endif
 
 		/* Cache the addresses for later calls */
 		record_C_func(procedureTuple, user_fn, inforec);
