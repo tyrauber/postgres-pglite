@@ -60,8 +60,23 @@ pg_chmod(const char * path, int mode_t) {
 #define find_other_exec find_other_exec_mobile
 #define get_share_path  get_share_path_mobile
 
+#include "pgl_config.h"
+
 static int find_other_exec_mobile(const char *argv0, const char *target, const char *versionstr, char *retpath) {
     (void)argv0; (void)versionstr;
+
+    /*
+     * PRIORITY 1: Check if pgl_init() was called with explicit config.
+     */
+    if (pgl_is_initialized()) {
+        if (pgl_get_argv0_internal(retpath, MAXPGPATH) == 0) {
+            return 0; // success
+        }
+    }
+
+    /*
+     * PRIORITY 2: Legacy environment variable fallback.
+     */
     const char* prefix = getenv("PREFIX");
     if (!prefix || !*prefix) prefix = getenv("ANDROID_DATA_DIR");
     if (!prefix || !*prefix) prefix = "/data/local/tmp/pglite";
@@ -72,7 +87,19 @@ static int find_other_exec_mobile(const char *argv0, const char *target, const c
 
 static void get_share_path_mobile(const char *my_exec_path, char *ret_path) {
     (void)my_exec_path;
+
     /*
+     * PRIORITY 1: Check if pgl_init() was called with explicit config.
+     * This is the preferred path - explicit configuration over env vars.
+     */
+    if (pgl_is_initialized()) {
+        if (pgl_get_share_path_internal(ret_path, MAXPGPATH) == 0) {
+            return;
+        }
+    }
+
+    /*
+     * PRIORITY 2: Legacy environment variable cascade.
      * Priority order for initdb share path resolution:
      * 1. PREFIX - explicit app prefix (set by test harness or pglite-daemon)
      * 2. IOS_RUNTIME_DIR / ANDROID_RUNTIME_DIR - mobile runtime bundles

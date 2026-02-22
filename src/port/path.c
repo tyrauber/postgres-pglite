@@ -38,6 +38,43 @@
 #include "mb/pg_wchar.h"
 #include "pg_config_paths.h"
 
+#if defined(PGL_MOBILE)
+/*
+ * PGLite unified path configuration.
+ *
+ * These stub functions provide a default "not initialized" state.
+ * The real implementations in pgl_config.c (compiled into the backend)
+ * override these weak definitions via the __attribute__((weak)) marker.
+ *
+ * This allows path.c to be compiled separately into libpgport without
+ * requiring pgl_config.c to be linked at that stage.
+ */
+#include <stdbool.h>
+
+/* Weak stub implementations - overridden by pgl_config.c */
+__attribute__((weak))
+bool pgl_is_initialized(void) {
+    return false;  /* Not initialized by default */
+}
+
+__attribute__((weak))
+int pgl_get_share_path_internal(char *out_path, size_t out_size) {
+    (void)out_path; (void)out_size;
+    return -1;  /* Not available */
+}
+
+__attribute__((weak))
+int pgl_get_argv0_internal(char *out_path, size_t out_size) {
+    (void)out_path; (void)out_size;
+    return -1;  /* Not available */
+}
+
+/* Wrapper that checks if pgl_init was called */
+static inline bool pgl_config_available(void) {
+    return pgl_is_initialized();
+}
+#endif
+
 
 #ifndef WIN32
 #define IS_PATH_VAR_SEP(ch) ((ch) == ':')
@@ -902,6 +939,21 @@ get_share_path(const char *my_exec_path, char *ret_path)
 {
 #if defined(PGL_MOBILE)
 	/*
+	 * PRIORITY 1: Check if pgl_init() was called with explicit config.
+	 * This is the preferred path - explicit configuration over env vars.
+	 * Uses weak linking - if pgl_config functions aren't linked, falls through.
+	 */
+	if (pgl_config_available())
+	{
+		if (pgl_get_share_path_internal(ret_path, MAXPGPATH) == 0)
+		{
+			return;
+		}
+		/* Fall through if config doesn't have share_dir (shouldn't happen) */
+	}
+
+	/*
+	 * PRIORITY 2: Legacy environment variable cascade.
 	 * Mobile platforms bundle PostgreSQL data files in the app.
 	 * Use environment variables to find them instead of deriving from exec path.
 	 *
@@ -962,7 +1014,61 @@ get_share_path(const char *my_exec_path, char *ret_path)
 void
 get_etc_path(const char *my_exec_path, char *ret_path)
 {
+#if defined(PGL_MOBILE)
+	/*
+	 * Mobile override for etc path.
+	 * Previously this function had no mobile override, causing PGSYSCONFDIR
+	 * to be set incorrectly by set_pglocale_pgservice() in exec.c.
+	 *
+	 * We derive etc_path from share_path if config is available.
+	 * Uses weak linking - if pgl_config functions aren't linked, falls through.
+	 */
+	if (pgl_config_available())
+	{
+		/* Get share path and derive etc from its parent */
+		char share_path[MAXPGPATH];
+		if (pgl_get_share_path_internal(share_path, MAXPGPATH) == 0)
+		{
+			/* share_path is like /foo/share/postgresql, we want /foo/etc */
+			char *slash1 = strrchr(share_path, '/');
+			if (slash1 && slash1 != share_path)
+			{
+				*slash1 = '\0';  /* Now /foo/share */
+				char *slash2 = strrchr(share_path, '/');
+				if (slash2 && slash2 != share_path)
+				{
+					*slash2 = '\0';  /* Now /foo */
+					snprintf(ret_path, MAXPGPATH, "%s/etc", share_path);
+					return;
+				}
+			}
+		}
+	}
+
+	/* Legacy env var fallback */
+	const char *prefix = getenv("PREFIX");
+	if (prefix && *prefix)
+	{
+		snprintf(ret_path, MAXPGPATH, "%s/etc", prefix);
+		return;
+	}
+
+#ifdef __APPLE__
+	const char *runtime = getenv("IOS_RUNTIME_DIR");
+#else
+	const char *runtime = getenv("ANDROID_RUNTIME_DIR");
+#endif
+	if (runtime && *runtime)
+	{
+		snprintf(ret_path, MAXPGPATH, "%s/etc", runtime);
+		return;
+	}
+
+	/* Fallback */
+	strlcpy(ret_path, "/data/local/tmp/pglite/etc", MAXPGPATH);
+#else
 	make_relative_path(ret_path, SYSCONFDIR, PGBINDIR, my_exec_path);
+#endif
 }
 
 /*

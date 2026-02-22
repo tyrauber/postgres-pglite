@@ -44,6 +44,27 @@
 
 #include "common/string.h"
 
+#if defined(PGL_MOBILE)
+/*
+ * PGLite unified path configuration.
+ *
+ * Weak stub implementations that get overridden by the real implementations
+ * in pgl_config.c when the backend is linked. This allows exec.c to be
+ * compiled separately into libpgcommon without requiring pgl_config.c.
+ *
+ * NOTE: The stub implementations are defined in path.c to avoid duplicate
+ * symbol errors. We just declare them here as extern.
+ */
+#include <stdbool.h>
+extern bool pgl_is_initialized(void);
+extern int pgl_get_argv0_internal(char *out_path, size_t out_size);
+
+/* Wrapper that checks if pgl_init was called */
+static inline bool pgl_config_available(void) {
+    return pgl_is_initialized();
+}
+#endif
+
 #if defined(__APPLE__) && (TARGET_OS_IOS || TARGET_IPHONE_SIMULATOR)
 /* For iOS builds where system() is unavailable, return failure */
 #define system(cmd) (-1)
@@ -165,8 +186,27 @@ int
 find_my_exec(const char *argv0, char *retpath)
 {
 #ifdef PGL_MOBILE
-	/* On mobile, we don't have a real executable - just return a fake path */
+	/*
+	 * On mobile, we don't have a real executable - return a synthetic path.
+	 *
+	 * PRIORITY 1: Check if pgl_init() was called with explicit config.
+	 * The config provides a synthetic argv0 that makes PostgreSQL's
+	 * relative path resolution work correctly.
+	 */
 	(void)argv0;
+
+	if (pgl_config_available())
+	{
+		if (pgl_get_argv0_internal != NULL &&
+			pgl_get_argv0_internal(retpath, MAXPGPATH) == 0)
+		{
+			return 0;
+		}
+	}
+
+	/*
+	 * PRIORITY 2: Legacy environment variable fallback.
+	 */
 	const char* prefix = getenv("PREFIX");
 	if (!prefix || !*prefix) prefix = getenv("ANDROID_DATA_DIR");
 	if (!prefix || !*prefix) prefix = getenv("IOS_RUNTIME_DIR");
