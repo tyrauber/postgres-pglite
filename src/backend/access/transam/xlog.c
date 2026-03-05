@@ -4928,6 +4928,15 @@ XLOGShmemInit(void)
 		/* Initialize local copy of WALInsertLocks */
 		WALInsertLocks = XLogCtl->Insert.WALInsertLocks;
 
+		/*
+		 * PGLite: When using external template databases (FUSE/network mounts),
+		 * shared memory may contain stale checkpoint data from a previous
+		 * pgl_initdb() call that ran before an existing database was detected.
+		 * Re-read pg_control from disk to ensure we have the correct checkpoint
+		 * location for the actual database on disk.
+		 */
+		ReadControlFile();
+
 		if (localControlFile)
 			pfree(localControlFile);
 		return;
