@@ -4946,10 +4946,16 @@ XLOGShmemInit(void)
 	/*
 	 * Already have read control file locally, unless in bootstrap mode. Move
 	 * contents into shared memory.
+	 *
+	 * PGLite/Mobile: When using FUSE/network-mounted template databases,
+	 * localControlFile may contain stale checkpoint data from pgl_initdb
+	 * that ran BEFORE an existing database was detected on disk. The initdb
+	 * creates checkpoint at 0/1B1D38, but the template has 0/A00028.
+	 * Always re-read pg_control from disk to get the actual checkpoint.
 	 */
 	if (localControlFile)
 	{
-		memcpy(ControlFile, localControlFile, sizeof(ControlFileData));
+		ReadControlFile();  /* Read actual pg_control from disk */
 		pfree(localControlFile);
 	}
 
