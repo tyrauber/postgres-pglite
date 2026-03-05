@@ -18,15 +18,20 @@
 #include "pgl_os.h"
 
 // ============================================================================
-// Debug logging control - disabled by default for performance
-// Build with -DPGL_VERBOSE_LOGGING to enable all debug output
+// Debug logging control
+// Runtime: Set PgliteConfig.debug_tracing = true to enable at runtime
+// Compile-time: Build with -DPGL_VERBOSE_LOGGING to force-enable all debug output
 // ============================================================================
-#ifndef PGL_VERBOSE_LOGGING
-#define PGL_DEBUG_PRINT(...) ((void)0)
-#define PGL_DEBUG_FLUSH(s) ((void)0)
-#else
+#include "pgl_config.h"
+
+#ifdef PGL_VERBOSE_LOGGING
+/* Compile-time forced enable - always print */
 #define PGL_DEBUG_PRINT(...) fprintf(__VA_ARGS__)
 #define PGL_DEBUG_FLUSH(s) fflush(s)
+#else
+/* Runtime check - only print if debug_tracing is enabled */
+#define PGL_DEBUG_PRINT(...) do { if (pgl_debug_tracing_enabled()) fprintf(__VA_ARGS__); } while(0)
+#define PGL_DEBUG_FLUSH(s) do { if (pgl_debug_tracing_enabled()) fflush(s); } while(0)
 #endif
 
 #ifdef PGL_MOBILE
@@ -455,6 +460,11 @@ static bool force_echo = false;
 #include "pgl_stubs.h"
 
 #include "pgl_tools.h"
+
+/* PGLite unified path configuration - must be before pgl_initdb.c */
+#ifdef PGL_MOBILE
+#include "pgl_config.c"
+#endif
 
 #include "pgl_initdb.c"
 
@@ -1665,7 +1675,10 @@ int pgl_initdb()
 
     if (!chdir(PGDATA))
     {
-        int __has_pgversion = (access("PG_VERSION", F_OK) == 0);
+        /* Use open() instead of access() - access() checks stale metadata cache on FUSE/network filesystems */
+        int __pgversion_fd = open("PG_VERSION", O_RDONLY);
+        int __has_pgversion = (__pgversion_fd >= 0);
+        if (__pgversion_fd >= 0) close(__pgversion_fd);
         PGL_DEBUG_PRINT(stderr, "[pgl_initdb] chdir PGDATA ok; PG_VERSION=%s force=%d\n", __has_pgversion ? "yes" : "no", __force_initdb ? 1 : 0);
         PGL_LOG_INFO("[pgl_initdb] Database exists check: PG_VERSION=%s force=%d", __has_pgversion ? "yes" : "no", __force_initdb ? 1 : 0);
         
